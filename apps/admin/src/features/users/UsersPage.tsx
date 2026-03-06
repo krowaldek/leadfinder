@@ -1,14 +1,14 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { UserDialog } from "@/components/UserDialog";
+import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth-store";
+import { type AuthUser, type CreateUserInput, type UpdateUserInput } from "@leadfinder/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { type AuthUser, type CreateUserInput, type UpdateUserInput } from "@leadfinder/contracts";
-import { createUser, fetchUsers, updateUser, updateUserStatus } from "./users-api";
-import { UserDialog } from "@/components/UserDialog";
-import { useAuthStore } from "@/stores/auth-store";
-import { cn } from "@/lib/utils";
 import { DataTable, type ColumnDef, type RowAction } from "../../../components/data-table";
+import { createUser, fetchUsers, updateUser, updateUserStatus } from "./users-api";
 
 const PAGE_SIZE = 20;
 
@@ -52,7 +52,7 @@ export function UsersPage() {
     mutationFn: ({ id, status }: { id: string; status: "ACTIVE" | "INACTIVE" }) =>
       updateUserStatus(id, { status }),
     onSuccess: () => {
-      toast.success("Status uzytkownika zostal zaktualizowany");
+        toast.success("Status uzytkownika zostal zaktualizowany");
       void queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: () => toast.error("Nie udalo sie zaktualizowac statusu"),
