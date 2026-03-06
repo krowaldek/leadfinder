@@ -1,0 +1,9 @@
+{
+  "ignore": [
+    ".turbo/**",
+    "coverage/**",
+    "dist/**",
+    "build/**",
+    "node_modules/**"
+  ]
+}

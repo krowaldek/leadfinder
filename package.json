@@ -1,0 +1,24 @@
+{
+  "name": "leadfinder",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
+    "format": "turbo run format",
+    "format:check": "turbo run format:check",
+    "typecheck": "turbo run typecheck",
+    "prisma:generate": "pnpm --filter @leadfinder/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @leadfinder/api prisma:migrate",
+    "prisma:seed": "pnpm --filter @leadfinder/api prisma:seed"
+  },
+  "devDependencies": {
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "turbo": "2.8.13",
+    "typescript": "5.9.3"
+  }
+}

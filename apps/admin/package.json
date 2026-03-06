@@ -1,0 +1,52 @@
+{
+  "name": "@leadfinder/admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "format": "oxfmt src components/data-table.tsx vite.config.ts",
+    "format:check": "oxfmt --check src components/data-table.tsx vite.config.ts",
+    "lint": "oxlint src components/data-table.tsx vite.config.ts",
+    "lint:fix": "oxlint --fix src components/data-table.tsx vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/cormorant-garamond": "5.2.11",
+    "@fontsource/public-sans": "5.2.7",
+    "@hookform/resolvers": "5.2.2",
+    "@leadfinder/contracts": "workspace:*",
+    "@radix-ui/react-dialog": " 1.1.15",
+    "@tailwindcss/vite": "4.2.1",
+    "@tanstack/react-query": "5.90.21",
+    "@tanstack/react-router": "1.166.2",
+    "axios": "1.13.6",
+    "clsx": "2.1.1",
+    "date-fns": "4.1.0",
+    "framer-motion": "12.35.0",
+    "lucide-react": " 0.577.0",
+    "react": "19.2.4 ",
+    "react-dom": "19.2.4",
+    "react-hook-form": "7.71.2",
+    "sonner": "2.0.7",
+    "tailwindcss": "4.2.1",
+    "zod": "4.3.6",
+    "zustand": "5.0.11"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "25.3.5",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.4",
+    "jsdom": "28.1.0",
+    "msw": "2.12.10",
+    "typescript": "5.9.3",
+    "vite": "7.3.1",
+    "vitest": "4.0.18"
+  }
+}

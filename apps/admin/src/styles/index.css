@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  font-family: "Public Sans", sans-serif;
+  background: #f2ebdf;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f2ebdf;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(201, 164, 90, 0.35);
+}

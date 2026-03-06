@@ -1,0 +1,18 @@
+import { z } from "zod";
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().min(1),
+  JWT_ACCESS_SECRET: z.string().min(16),
+  JWT_REFRESH_SECRET: z.string().min(16),
+  ACCESS_TOKEN_TTL: z.string().min(2).default("15m"),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).default(7),
+  API_PORT: z.coerce.number().int().positive().default(3001),
+  ADMIN_EMAIL: z.email().default("admin@leadfinder.local"),
+  ADMIN_PASSWORD: z.string().min(8).default("ChangeMe123!"),
+});
+
+export type AppEnv = z.infer<typeof envSchema>;
+
+export function validateEnv(config: Record<string, unknown>) {
+  return envSchema.parse(config);
+}

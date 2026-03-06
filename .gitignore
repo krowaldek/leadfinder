@@ -1,0 +1,23 @@
+node_modules
+.pnpm-store
+pnpm-lock.yaml
+.turbo
+
+# Environment files
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+coverage
+dist
+build
+.vite
+.DS_Store
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+apps/api/prisma/test.db
+apps/api/prisma/test.db-journal
+playwright-report
