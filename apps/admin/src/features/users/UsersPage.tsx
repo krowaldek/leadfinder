@@ -1,14 +1,27 @@
 import { UserDialog } from "@/components/UserDialog";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
-import { type AuthUser, type CreateUserInput, type UpdateUserInput } from "@leadfinder/contracts";
+import {
+  type AuthUser,
+  type CreateUserInput,
+  type UpdateUserInput,
+} from "@leadfinder/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { DataTable, type ColumnDef, type RowAction } from "../../../components/data-table";
-import { createUser, fetchUsers, updateUser, updateUserStatus } from "./users-api";
+import {
+  DataTable,
+  type ColumnDef,
+  type RowAction,
+} from "../../../components/data-table";
+import {
+  createUser,
+  fetchUsers,
+  updateUser,
+  updateUserStatus,
+} from "./users-api";
 
 const PAGE_SIZE = 20;
 
@@ -49,10 +62,15 @@ export function UsersPage() {
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: "ACTIVE" | "INACTIVE" }) =>
-      updateUserStatus(id, { status }),
+    mutationFn: ({
+      id,
+      status,
+    }: {
+      id: string;
+      status: "ACTIVE" | "INACTIVE";
+    }) => updateUserStatus(id, { status }),
     onSuccess: () => {
-        toast.success("Status uzytkownika zostal zaktualizowany");
+      toast.success("Status uzytkownika zostal zaktualizowany");
       void queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: () => toast.error("Nie udalo sie zaktualizowac statusu"),
@@ -94,7 +112,9 @@ export function UsersPage() {
         accessorFn: (user) => user.systemRole,
         cell: ({ row }) => (
           <Tag tone="dark">
-            {row.systemRole === "SUPER_ADMIN" ? "Super administrator" : "Administrator"}
+            {row.systemRole === "SUPER_ADMIN"
+              ? "Super administrator"
+              : "Administrator"}
           </Tag>
         ),
       },
@@ -142,7 +162,8 @@ export function UsersPage() {
         id: "deactivate",
         label: "Dezaktywuj",
         hidden: (user) => user.status !== "ACTIVE",
-        disabled: (user) => statusMutation.isPending || currentUser?.id === user.id,
+        disabled: (user) =>
+          statusMutation.isPending || currentUser?.id === user.id,
         onClick: (user) => {
           statusMutation.mutate({
             id: user.id,
@@ -168,28 +189,42 @@ export function UsersPage() {
 
   return (
     <div className="grid gap-6">
-      <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+      <section className="grid min-w-0 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="rounded-[2rem] border border-stone-900/10 bg-[#fcfaf6] p-6"
+          className="min-w-0 rounded-[2rem] border border-stone-900/10 bg-[#fcfaf6] p-6 dark:border-stone-700/60 dark:bg-stone-800/60"
         >
-          <p className="text-xs uppercase tracking-[0.35em] text-stone-500">
+          <p className="text-xs uppercase tracking-[0.35em] text-stone-500 dark:text-stone-400">
             Zarzadzanie uzytkownikami
           </p>
-          <h3 className="mt-4 max-w-2xl font-[Cormorant_Garamond] text-4xl font-semibold text-stone-950">
-            Wszystkie konta administratorow i uzytkownikow sa zarzadzane w jednym miejscu.
+          <h3 className="mt-4 max-w-2xl font-[Cormorant_Garamond] text-4xl font-semibold text-stone-950 dark:text-stone-100">
+            Wszystkie konta administratorow i uzytkownikow sa zarzadzane w
+            jednym miejscu.
           </h3>
-          <p className="mt-4 max-w-2xl text-sm leading-7 text-stone-600">
-            Dodawaj, edytuj i aktywuj konta bez opuszczania panelu administracyjnego.
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-stone-600 dark:text-stone-400">
+            Dodawaj, edytuj i aktywuj konta bez opuszczania panelu
+            administracyjnego.
           </p>
         </motion.div>
 
-        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-1 xl:grid-rows-3">
-          <StatCard label="Liczba uzytkownikow" value={String(stats.total)} accent="stone" />
-          <StatCard label="Konta aktywne" value={String(stats.active)} accent="amber" />
-          <StatCard label="Konta firmowe" value={String(stats.company)} accent="forest" />
+        <div className="grid min-w-0 gap-4 md:grid-cols-3 xl:grid-cols-1 xl:grid-rows-3">
+          <StatCard
+            label="Liczba uzytkownikow"
+            value={String(stats.total)}
+            accent="stone"
+          />
+          <StatCard
+            label="Konta aktywne"
+            value={String(stats.active)}
+            accent="amber"
+          />
+          <StatCard
+            label="Konta firmowe"
+            value={String(stats.company)}
+            accent="forest"
+          />
         </div>
       </section>
 
@@ -262,15 +297,25 @@ function StatCard({
   accent: "stone" | "amber" | "forest";
 }) {
   const accentClass = {
-    stone: "from-stone-950 to-stone-800 text-stone-50",
-    amber: "from-amber-300 to-amber-100 text-amber-950",
-    forest: "from-emerald-300 to-emerald-100 text-emerald-950",
+    stone:
+      "from-stone-950 to-stone-800 text-stone-50 dark:from-stone-800 dark:to-stone-700",
+    amber:
+      "from-amber-300 to-amber-100 text-amber-950 dark:from-amber-700 dark:to-amber-900 dark:text-amber-100",
+    forest:
+      "from-emerald-300 to-emerald-100 text-emerald-950 dark:from-emerald-800 dark:to-emerald-950 dark:text-emerald-100",
   }[accent];
 
   return (
-    <div className={cn("rounded-[1.6rem] bg-gradient-to-br p-5 shadow-sm", accentClass)}>
+    <div
+      className={cn(
+        "rounded-[1.6rem] bg-gradient-to-br p-5 shadow-sm",
+        accentClass,
+      )}
+    >
       <p className="text-xs uppercase tracking-[0.28em] opacity-70">{label}</p>
-      <p className="mt-4 font-[Cormorant_Garamond] text-5xl font-semibold">{value}</p>
+      <p className="mt-4 font-[Cormorant_Garamond] text-5xl font-semibold">
+        {value}
+      </p>
     </div>
   );
 }
@@ -283,11 +328,13 @@ function Tag({
   tone: "stone" | "dark" | "amber" | "forest" | "rose";
 }) {
   const toneClass = {
-    stone: "bg-stone-100 text-stone-700",
-    dark: "bg-stone-900 text-stone-100",
-    amber: "bg-amber-100 text-amber-900",
-    forest: "bg-emerald-100 text-emerald-900",
-    rose: "bg-rose-100 text-rose-900",
+    stone: "bg-stone-100 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
+    dark: "bg-stone-900 text-stone-100 dark:bg-stone-700 dark:text-stone-100",
+    amber:
+      "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-300",
+    forest:
+      "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
+    rose: "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-300",
   }[tone];
 
   return (

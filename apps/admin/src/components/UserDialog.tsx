@@ -53,7 +53,9 @@ interface UserDialogProps {
   mode: "create" | "edit";
   initialUser?: AuthUser | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (values: CreateUserInput | Omit<FormValues, "email" | "password">) => Promise<void>;
+  onSubmit: (
+    values: CreateUserInput | Omit<FormValues, "email" | "password">,
+  ) => Promise<void>;
   isPending: boolean;
 }
 
@@ -96,18 +98,19 @@ export function UserDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-stone-950/45 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,720px)] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-stone-900/10 bg-[#f8f3eb] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.22)]">
+        <Dialog.Overlay className="fixed inset-0 bg-stone-950/45 backdrop-blur-sm dark:bg-stone-950/70" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,720px)] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-stone-900/10 bg-[#f8f3eb] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.22)] dark:border-stone-700/60 dark:bg-stone-900 dark:shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <Dialog.Title className="font-[Cormorant_Garamond] text-3xl font-semibold text-stone-950">
+              <Dialog.Title className="font-[Cormorant_Garamond] text-3xl font-semibold text-stone-950 dark:text-stone-100">
                 {isEdit ? "Edytuj uzytkownika" : "Dodaj uzytkownika"}
               </Dialog.Title>
-              <Dialog.Description className="mt-2 text-sm text-stone-600">
-                Uzupelnij dane konta oraz poziom dostepu w panelu administracyjnym.
+              <Dialog.Description className="mt-2 text-sm text-stone-600 dark:text-stone-400">
+                Uzupelnij dane konta oraz poziom dostepu w panelu
+                administracyjnym.
               </Dialog.Description>
             </div>
-            <Dialog.Close className="rounded-full border border-stone-900/10 p-2 text-stone-600 transition hover:bg-white">
+            <Dialog.Close className="rounded-full border border-stone-900/10 p-2 text-stone-600 transition hover:bg-white dark:border-stone-700 dark:text-stone-400 dark:hover:bg-stone-800">
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>
@@ -122,7 +125,9 @@ export function UserDialog({
                   systemRole: values.systemRole,
                   accountType: values.accountType,
                   companyName:
-                    values.accountType === "COMPANY" ? (values.companyName ?? null) : null,
+                    values.accountType === "COMPANY"
+                      ? (values.companyName ?? null)
+                      : null,
                   status: values.status,
                 });
               } else {
@@ -134,7 +139,9 @@ export function UserDialog({
                   systemRole: values.systemRole,
                   accountType: values.accountType,
                   companyName:
-                    values.accountType === "COMPANY" ? (values.companyName ?? null) : null,
+                    values.accountType === "COMPANY"
+                      ? (values.companyName ?? null)
+                      : null,
                   status: values.status,
                 });
               }
@@ -148,19 +155,28 @@ export function UserDialog({
               <input
                 {...form.register("email")}
                 disabled={isEdit}
-                className={inputClass(form.formState.errors.email?.message, isEdit)}
+                className={inputClass(
+                  form.formState.errors.email?.message,
+                  isEdit,
+                )}
                 placeholder="admin@leadfinder.local"
               />
             </Field>
 
-            <Field label="Imie" error={form.formState.errors.firstName?.message}>
+            <Field
+              label="Imie"
+              error={form.formState.errors.firstName?.message}
+            >
               <input
                 {...form.register("firstName")}
                 className={inputClass(form.formState.errors.firstName?.message)}
               />
             </Field>
 
-            <Field label="Nazwisko" error={form.formState.errors.lastName?.message}>
+            <Field
+              label="Nazwisko"
+              error={form.formState.errors.lastName?.message}
+            >
               <input
                 {...form.register("lastName")}
                 className={inputClass(form.formState.errors.lastName?.message)}
@@ -168,11 +184,16 @@ export function UserDialog({
             </Field>
 
             {!isEdit ? (
-              <Field label="Haslo" error={form.formState.errors.password?.message}>
+              <Field
+                label="Haslo"
+                error={form.formState.errors.password?.message}
+              >
                 <input
                   type="password"
                   {...form.register("password")}
-                  className={inputClass(form.formState.errors.password?.message)}
+                  className={inputClass(
+                    form.formState.errors.password?.message,
+                  )}
                 />
               </Field>
             ) : null}
@@ -185,7 +206,10 @@ export function UserDialog({
             </Field>
 
             <Field label="Typ konta">
-              <select {...form.register("accountType")} className={inputClass()}>
+              <select
+                {...form.register("accountType")}
+                className={inputClass()}
+              >
                 <option value="PERSONAL">Osobiste</option>
                 <option value="COMPANY">Firmowe</option>
               </select>
@@ -206,21 +230,27 @@ export function UserDialog({
               >
                 <input
                   {...form.register("companyName")}
-                  className={inputClass(form.formState.errors.companyName?.message)}
+                  className={inputClass(
+                    form.formState.errors.companyName?.message,
+                  )}
                 />
               </Field>
             ) : null}
 
             <div className="mt-2 flex justify-end gap-3 md:col-span-2">
-              <Dialog.Close className="rounded-full border border-stone-900/10 px-5 py-2 text-sm text-stone-700 transition hover:bg-white">
+              <Dialog.Close className="rounded-full border border-stone-900/10 px-5 py-2 text-sm text-stone-700 transition hover:bg-white dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800">
                 Anuluj
               </Dialog.Close>
               <button
                 type="submit"
                 disabled={isPending}
-                className="rounded-full bg-stone-950 px-5 py-2 text-sm font-medium text-stone-50 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full bg-stone-950 px-5 py-2 text-sm font-medium text-stone-50 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
               >
-                {isPending ? "Zapisywanie..." : isEdit ? "Zapisz zmiany" : "Dodaj uzytkownika"}
+                {isPending
+                  ? "Zapisywanie..."
+                  : isEdit
+                    ? "Zapisz zmiany"
+                    : "Dodaj uzytkownika"}
               </button>
             </div>
           </form>
@@ -242,20 +272,33 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <label className={cn("grid gap-2 text-sm text-stone-700", className)}>
-      <span className="font-medium uppercase tracking-[0.2em] text-stone-500">{label}</span>
+    <label
+      className={cn(
+        "grid gap-2 text-sm text-stone-700 dark:text-stone-300",
+        className,
+      )}
+    >
+      <span className="font-medium uppercase tracking-[0.2em] text-stone-500 dark:text-stone-400">
+        {label}
+      </span>
       {children}
-      {error ? <span className="text-xs text-rose-600">{error}</span> : null}
+      {error ? (
+        <span className="text-xs text-rose-600 dark:text-rose-400">
+          {error}
+        </span>
+      ) : null}
     </label>
   );
 }
 
 function inputClass(error?: string, disabled?: boolean) {
   return cn(
-    "min-h-12 rounded-2xl border px-4 text-sm outline-none transition",
-    error ? "border-rose-500 bg-rose-50" : "border-stone-900/10 bg-white",
+    "min-h-12 rounded-2xl border px-4 text-sm outline-none transition dark:text-stone-100",
+    error
+      ? "border-rose-500 bg-rose-50 dark:border-rose-700 dark:bg-rose-950/30"
+      : "border-stone-900/10 bg-white dark:border-stone-700 dark:bg-stone-800",
     disabled
-      ? "cursor-not-allowed bg-stone-100 text-stone-500"
-      : "focus:border-amber-500 focus:ring-2 focus:ring-amber-200",
+      ? "cursor-not-allowed bg-stone-100 text-stone-500 dark:bg-stone-700 dark:text-stone-500"
+      : "focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:focus:border-amber-600 dark:focus:ring-amber-900/50",
   );
 }

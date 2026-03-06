@@ -1,27 +1,37 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  color-scheme: light;
-  font-family: "Public Sans", sans-serif;
-  background: #f2ebdf;
+    color-scheme: light;
+    font-family: "Public Sans", sans-serif;
+    background: #f2ebdf;
+}
+
+.dark {
+    color-scheme: dark;
 }
 
 body {
-  margin: 0;
-  min-width: 320px;
-  background: #f2ebdf;
+    margin: 0;
+    min-width: 320px;
+    background: #f2ebdf;
+}
+
+.dark body {
+    background: #1a1714;
 }
 
 * {
-  box-sizing: border-box;
+    box-sizing: border-box;
 }
 
 button,
 input,
 select {
-  font: inherit;
+    font: inherit;
 }
 
 ::selection {
-  background: rgba(201, 164, 90, 0.35);
+    background: rgba(201, 164, 90, 0.35);
 }
