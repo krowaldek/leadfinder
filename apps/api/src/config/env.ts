@@ -9,6 +9,10 @@ const envSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(3001),
   ADMIN_EMAIL: z.email().default("admin@leadfinder.local"),
   ADMIN_PASSWORD: z.string().min(8).default("ChangeMe123!"),
+  BK_API_BASE_URL: z.string().url().optional(),
+  EZ_API_BASE_URL: z.string().url().optional(),
+  REDIS_URL: z.string().default("redis://localhost:6380"),
+  BK_SCRAPER_CRON: z.string().default("0 6 * * *"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

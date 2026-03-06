@@ -1,9 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [pgvector(map: "vector")]
 }
 
 enum UserStatus {
@@ -66,4 +68,57 @@ model AuditLog {
 
   @@index([actorUserId])
   @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Announcements
+// ---------------------------------------------------------------------------
+
+enum AnnouncementSource {
+  BAZA_KONKURENCYJNOSCI
+  E_ZAMOWIENIA
+  PLATFORMA_ZAKUPOWA
+}
+
+enum AnnouncementStatus {
+  OPEN
+  CLOSED
+  AWARDED
+  UNKNOWN
+}
+
+model Announcement {
+  id           String              @id @default(uuid()) @db.Uuid
+  sourceSystem AnnouncementSource
+  externalId   String
+  title        String
+  description  String?
+  url          String
+  status       AnnouncementStatus  @default(OPEN)
+  valueMin     Decimal?            @db.Decimal(15, 2)
+  valueMax     Decimal?            @db.Decimal(15, 2)
+  publishedAt  DateTime?
+  deadlineAt   DateTime?
+  embedding    Unsupported("vector(1536)")?
+  rawData      Json
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([sourceSystem, externalId])
+  @@index([sourceSystem])
+  @@index([status])
+  @@index([deadlineAt])
+  @@map("announcements")
+}
+
+model ScraperMetadata {
+  id                  Int                 @id @default(autoincrement())
+  providerName        AnnouncementSource  @unique
+  lastSyncedAt        DateTime?
+  lastProcessedItemId String?
+  config              Json?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@map("scraper_metadata")
 }
