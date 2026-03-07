@@ -9,6 +9,7 @@ import { UsersModule } from "./users/users.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { AuditModule } from "./audit/audit.module.js";
 import { ScrapersModule } from "./scrapers/scrapers.module.js";
+import { AnnouncementsModule } from "./announcements/announcements.module.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const envFilePaths = [
@@ -31,6 +32,7 @@ const envFilePaths = [
     UsersModule,
     HealthModule,
     ScrapersModule,
+    AnnouncementsModule,
   ],
 })
 export class AppModule {}

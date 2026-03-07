@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/stores/auth-store";
-import { Outlet, useNavigate } from "@tanstack/react-router";
+import { Outlet, useNavigate, useLocation } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { Menu } from "lucide-react";
 import { useState } from "react";
@@ -7,10 +7,18 @@ import { logout } from "@/features/auth/auth-api";
 import { Sidebar } from "@/components/Sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
+const PAGE_META: Record<string, { title: string; badge: string }> = {
+  "/users": { title: "Zarządzanie użytkownikami", badge: "Panel wewnętrzny" },
+  "/announcements": { title: "Ogłoszenia", badge: "Scraper" },
+};
+
 export function AppShell() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { clearSession } = useAuthStore();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const pageMeta = PAGE_META[location.pathname] ?? { title: "", badge: "Panel wewnętrzny" };
 
   const handleLogout = async () => {
     try {
@@ -66,11 +74,11 @@ export function AppShell() {
                   Leadfinder
                 </p>
                 <h2 className="mt-2 font-[Cormorant_Garamond] text-4xl font-semibold text-stone-950 dark:text-stone-100">
-                  Zarzadzanie uzytkownikami
+                  {pageMeta.title}
                 </h2>
               </div>
               <div className="ml-4 shrink-0 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs uppercase tracking-[0.28em] text-amber-900 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
-                Panel wewnetrzny
+                {pageMeta.badge}
               </div>
             </div>
             <Outlet />
