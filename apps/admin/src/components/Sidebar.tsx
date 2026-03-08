@@ -3,7 +3,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Link, useLocation } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { LogOut, ShieldCheck, Users, FileText, X } from "lucide-react";
+import { LogOut, ShieldCheck, Users, FileText, Building2, X } from "lucide-react";
 
 const navItems = [
   {
@@ -15,6 +15,11 @@ const navItems = [
     to: "/announcements",
     label: "Ogłoszenia",
     icon: FileText,
+  },
+  {
+    to: "/clients",
+    label: "Klienci",
+    icon: Building2,
   },
 ];
 

@@ -13,6 +13,7 @@ import { AnnouncementsModule } from "./announcements/announcements.module.js";
 import { NormalizationModule } from "./normalization/normalization.module.js";
 import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { SearchModule } from "./search/search.module.js";
+import { ClientsModule } from "./clients/clients.module.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const envFilePaths = [
@@ -39,6 +40,7 @@ const envFilePaths = [
     NormalizationModule,
     EmbeddingModule,
     SearchModule,
+    ClientsModule,
   ],
 })
 export class AppModule {}

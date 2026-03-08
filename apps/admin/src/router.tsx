@@ -9,6 +9,8 @@ import { AppShell } from "@/components/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { UsersPage } from "@/features/users/UsersPage";
 import { AnnouncementsPage } from "@/features/announcements/AnnouncementsPage";
+import { ClientsPage } from "@/features/clients/ClientsPage";
+import { ClientPromptPage } from "@/features/clients/ClientPromptPage";
 import { getAuthSnapshot } from "@/stores/auth-store";
 
 function requireAuth() {
@@ -62,9 +64,21 @@ const announcementsRoute = createRoute({
   component: AnnouncementsPage,
 });
 
+const clientsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/clients",
+  component: ClientsPage,
+});
+
+const clientPromptRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/clients/prompt",
+  component: ClientPromptPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appLayoutRoute.addChildren([homeRoute, usersRoute, announcementsRoute]),
+  appLayoutRoute.addChildren([homeRoute, usersRoute, announcementsRoute, clientsRoute, clientPromptRoute]),
 ]);
 
 export const router = createRouter({

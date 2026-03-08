@@ -10,6 +10,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 const PAGE_META: Record<string, { title: string; badge: string }> = {
   "/users": { title: "Zarządzanie użytkownikami", badge: "Panel wewnętrzny" },
   "/announcements": { title: "Ogłoszenia", badge: "Scraper" },
+  "/clients": { title: "Klienci", badge: "CRM" },
+  "/clients/prompt": { title: "Nowy klient", badge: "AI" },
 };
 
 export function AppShell() {

@@ -131,6 +131,7 @@ model AnnouncementItem {
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
   announcement   Announcement           @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  clientMatches  ClientMatch[]
 
   @@unique([announcementId, itemIndex])
   @@index([announcementId])
@@ -148,4 +149,64 @@ model ScraperMetadata {
   updatedAt           DateTime            @updatedAt
 
   @@map("scraper_metadata")
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+enum GeographicScope {
+  NATIONAL
+  REGIONAL
+  LOCAL
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ClientMatchStatus {
+  NEW
+  VIEWED
+  DISMISSED
+  SHORTLISTED
+}
+
+model Client {
+  id                String          @id @default(uuid()) @db.Uuid
+  companyName       String
+  industry          String
+  geographicScope   GeographicScope
+  geographicDetails String?
+  budgetDescription String
+  contactPersonName String
+  contactPersonRole String
+  profileSummary    String          @db.Text
+  profileEmbedding  Unsupported("vector(1536)")?
+  status            ClientStatus    @default(ACTIVE)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  matches           ClientMatch[]
+
+  @@index([status])
+  @@map("clients")
+}
+
+model ClientMatch {
+  id                 String            @id @default(uuid()) @db.Uuid
+  clientId           String            @db.Uuid
+  announcementItemId String            @db.Uuid
+  similarity         Float
+  status             ClientMatchStatus @default(NEW)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  client             Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  announcementItem   AnnouncementItem  @relation(fields: [announcementItemId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, announcementItemId])
+  @@index([clientId])
+  @@index([announcementItemId])
+  @@index([status])
+  @@map("client_matches")
 }

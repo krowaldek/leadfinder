@@ -15,6 +15,7 @@ const envSchema = z.object({
   BK_SCRAPER_CRON: z.string().default("0 6 * * *"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  OPENAI_CHAT_MODEL: z.string().default("gpt-4o-mini"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
