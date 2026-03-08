@@ -11,6 +11,7 @@ import { AuditModule } from "./audit/audit.module.js";
 import { ScrapersModule } from "./scrapers/scrapers.module.js";
 import { AnnouncementsModule } from "./announcements/announcements.module.js";
 import { NormalizationModule } from "./normalization/normalization.module.js";
+import { EmbeddingModule } from "./embedding/embedding.module.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const envFilePaths = [
@@ -35,6 +36,7 @@ const envFilePaths = [
     ScrapersModule,
     AnnouncementsModule,
     NormalizationModule,
+    EmbeddingModule,
   ],
 })
 export class AppModule {}

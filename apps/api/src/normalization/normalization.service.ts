@@ -1,5 +1,11 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 import { PrismaService } from "../database/prisma.service.js";
+import {
+  EMBEDDING_QUEUE,
+  EmbeddingJob,
+} from "../embedding/embedding-queue.constants.js";
 
 // ---------------------------------------------------------------------------
 // BK rawData shape (orders array)
@@ -43,6 +49,8 @@ export class NormalizationService {
   constructor(
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
+    @InjectQueue(EMBEDDING_QUEUE)
+    private readonly embeddingQueue: Queue,
   ) {}
 
   /**
@@ -106,28 +114,29 @@ export class NormalizationService {
     this.logger.log(
       `Saved ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
     );
-  }
 
-  /**
-   * Placeholder dla przyszłego workera embeddings.
-   * Wywoływany przez BullMQ job per-item po zakończeniu processAnnouncementToItems.
-   *
-   * @param itemId UUID rekordu AnnouncementItem
-   */
-  async generateItemEmbedding(itemId: string): Promise<void> {
-    // TODO (Krok 2): Wywołać LangChain + OpenAI embeddings:
-    //
-    // 1. Pobrać AnnouncementItem.searchContext
-    // 2. Wywołać openai.embeddings.create({ model: "text-embedding-3-small", input: searchContext })
-    // 3. Zapisać wektor do pola `embedding` przez raw SQL (pgvector nie wspiera Prisma bez raw):
-    //    await this.prisma.$executeRaw`
-    //      UPDATE announcement_items
-    //      SET embedding = ${vector}::vector, status = 'EMBEDDED'
-    //      WHERE id = ${itemId}::uuid
-    //    `
-    // 4. W razie błędu ustawić status = 'ERROR' i zalogować.
-    this.logger.warn(
-      `generateItemEmbedding called for ${itemId} — not yet implemented`,
+    // Pobierz UUID zapisanych itemów i wrzuć do kolejki embedding
+    const savedItems = await this.prisma.announcementItem.findMany({
+      where: { announcementId },
+      select: { id: true },
+      orderBy: { itemIndex: "asc" },
+    });
+
+    for (const item of savedItems) {
+      await this.embeddingQueue.add(
+        EmbeddingJob.EMBED_ITEM,
+        { itemId: item.id },
+        {
+          attempts: 3,
+          backoff: { type: "exponential", delay: 5_000 },
+          removeOnComplete: { count: 100 },
+          removeOnFail: { count: 50 },
+        },
+      );
+    }
+
+    this.logger.log(
+      `Enqueued ${savedItems.length} embedding job(s) for announcement ${announcementId}`,
     );
   }
 

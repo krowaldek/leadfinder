@@ -20,6 +20,8 @@
     "normalization:test": "node --import tsx src/normalization/run.ts"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.31",
+    "@langchain/openai": "^1.2.12",
     "@leadfinder/contracts": "workspace:*",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "11.1.16",

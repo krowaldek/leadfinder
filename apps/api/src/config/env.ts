@@ -13,6 +13,8 @@ const envSchema = z.object({
   EZ_API_BASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().default("redis://localhost:6380"),
   BK_SCRAPER_CRON: z.string().default("0 6 * * *"),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
