@@ -4,6 +4,7 @@ import axios, { AxiosError } from "axios";
 import pLimit from "p-limit";
 import { AnnouncementSource } from "@prisma/client";
 import { PrismaService } from "../../database/prisma.service.js";
+import { NormalizationService } from "../../normalization/normalization.service.js";
 import {
   mapBkDetailToUpsertData,
   type BkSearchResponse,
@@ -23,6 +24,8 @@ export class BkScraperService {
     private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService,
+    @Inject(NormalizationService)
+    private readonly normalization: NormalizationService,
   ) {
     const url = this.config.get<string>("BK_API_BASE_URL");
     if (!url) {
@@ -91,7 +94,7 @@ export class BkScraperService {
 
       const upsertData = mapBkDetailToUpsertData(id, detail);
 
-      await this.prisma.announcement.upsert({
+      const saved = await this.prisma.announcement.upsert({
         where: {
           sourceSystem_externalId: {
             sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
@@ -110,9 +113,20 @@ export class BkScraperService {
           deadlineAt: upsertData.deadlineAt,
           rawData: upsertData.rawData,
         },
+        select: { id: true },
       });
 
       this.logger.log(`BK: saved ${id}`);
+
+      try {
+        await this.normalization.processAnnouncementToItems(saved.id);
+      } catch (normErr) {
+        const msg =
+          normErr instanceof Error ? normErr.message : String(normErr);
+        this.logger.warn(
+          `BK: normalization failed for ${id} (${saved.id}): ${msg}`,
+        );
+      }
     } catch (err) {
       const message =
         err instanceof AxiosError
