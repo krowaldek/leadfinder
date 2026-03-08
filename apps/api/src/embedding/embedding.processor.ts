@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from "@nestjs/bullmq";
-import { Logger } from "@nestjs/common";
+import { Inject, Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { EmbeddingService } from "./embedding.service.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
@@ -12,7 +12,10 @@ interface EmbedItemPayload {
 export class EmbeddingProcessor extends WorkerHost {
   private readonly logger = new Logger(EmbeddingProcessor.name);
 
-  constructor(private readonly embeddingService: EmbeddingService) {
+  constructor(
+    @Inject(EmbeddingService)
+    private readonly embeddingService: EmbeddingService,
+  ) {
     super();
   }
 

@@ -17,7 +17,8 @@
     "prisma:migrate": "prisma db push",
     "prisma:seed": "node --import tsx prisma/seed.ts",
     "scraper:bk": "node --import tsx src/scrapers/bk/run.ts",
-    "normalization:test": "node --import tsx src/normalization/run.ts"
+    "normalization:test": "node --import tsx src/normalization/run.ts",
+    "normalization:backfill": "node --import tsx src/normalization/backfill.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.31",

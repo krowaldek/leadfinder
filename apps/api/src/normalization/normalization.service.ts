@@ -21,7 +21,7 @@ interface BkOrderItem {
   id: number;
   description?: string;
   cpv_items?: BkCpvItem[];
-  estimated_value?: number | null;
+  estimated_value?: number | string | null;
   subcategory?: { id: number; name: string };
   category?: { id: number; name: string };
 }
@@ -30,7 +30,7 @@ interface BkOrder {
   id: number;
   title?: string;
   order_items?: BkOrderItem[];
-  estimated_value?: number | null;
+  estimated_value?: number | string | null;
 }
 
 interface BkRawData {
@@ -105,7 +105,7 @@ export class NormalizationService {
           title: item.title,
           description: item.description ?? null,
           searchContext: item.searchContext,
-          price: item.price ?? null,
+          price: item.price != null ? item.price : null,
           status: "PENDING" as const,
         })),
       }),
@@ -176,7 +176,7 @@ export class NormalizationService {
         title,
         description,
         searchContext,
-        price: rawPrice != null ? rawPrice : null,
+        price: rawPrice != null ? this.normalizePrice(rawPrice) : null,
       };
     });
   }
@@ -216,5 +216,18 @@ export class NormalizationService {
     }
 
     return parts.join(" | ");
+  }
+
+  /**
+   * Normalizuje wartość ceny z BK API do formatu akceptowanego przez Prisma Decimal.
+   * BK zwraca ceny jako liczby lub stringi z europejskim formatem (np. "1 234,56").
+   */
+  private normalizePrice(raw: number | string): string | null {
+    if (typeof raw === "number") return String(raw);
+    // Usuń spacje grupowania, zamień przecinek na kropkę
+    const normalized = String(raw).replace(/\s/g, "").replace(",", ".");
+    // Walidacja: musi być parsowalna jako liczba
+    if (Number.isNaN(Number(normalized))) return null;
+    return normalized;
   }
 }
