@@ -103,12 +103,39 @@ model Announcement {
   rawData      Json
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
+  items        AnnouncementItem[]
 
   @@unique([sourceSystem, externalId])
   @@index([sourceSystem])
   @@index([status])
   @@index([deadlineAt])
   @@map("announcements")
+}
+
+enum AnnouncementItemStatus {
+  PENDING
+  EMBEDDED
+  ERROR
+}
+
+model AnnouncementItem {
+  id             String                 @id @default(uuid()) @db.Uuid
+  announcementId String                 @db.Uuid
+  itemIndex      Int
+  title          String
+  description    String?                @db.Text
+  searchContext  String                 @db.Text
+  embedding      Unsupported("vector(1536)")?
+  price          Decimal?               @db.Decimal(15, 2)
+  status         AnnouncementItemStatus @default(PENDING)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  announcement   Announcement           @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, itemIndex])
+  @@index([announcementId])
+  @@index([status])
+  @@map("announcement_items")
 }
 
 model ScraperMetadata {

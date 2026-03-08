@@ -1,0 +1,211 @@
+import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../database/prisma.service.js";
+
+// ---------------------------------------------------------------------------
+// BK rawData shape (orders array)
+// ---------------------------------------------------------------------------
+
+interface BkCpvItem {
+  id: number;
+  code: string;
+  name: string;
+}
+
+interface BkOrderItem {
+  id: number;
+  description?: string;
+  cpv_items?: BkCpvItem[];
+  estimated_value?: number | null;
+  subcategory?: { id: number; name: string };
+  category?: { id: number; name: string };
+}
+
+interface BkOrder {
+  id: number;
+  title?: string;
+  order_items?: BkOrderItem[];
+  estimated_value?: number | null;
+}
+
+interface BkRawData {
+  orders?: BkOrder[];
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+@Injectable()
+export class NormalizationService {
+  private readonly logger = new Logger(NormalizationService.name);
+
+  constructor(
+    @Inject(PrismaService)
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /**
+   * Przetwarza ogłoszenie na pozycje (AnnouncementItem).
+   *
+   * Logika:
+   *  – Pobiera announcement wraz z rawData.
+   *  – Wyciąga tablicę `orders` (odpowiednik "positionLines" w BK API).
+   *  – Jeśli orders nie są puste → jeden AnnouncementItem per order.
+   *  – Jeśli orders są puste   → jeden ogólny item z tytułu ogłoszenia.
+   *  – Usuwa poprzednie items i tworzy nowe w jednej transakcji.
+   *  – Dla każdego buduje searchContext: "TYTUŁ: … | OPIS: … | KODY CPV: …"
+   */
+  async processAnnouncementToItems(announcementId: string): Promise<void> {
+    const announcement = await this.prisma.announcement.findUnique({
+      where: { id: announcementId },
+    });
+
+    if (!announcement) {
+      throw new NotFoundException(
+        `Announcement not found: ${announcementId}`,
+      );
+    }
+
+    this.logger.log(
+      `Processing announcement ${announcementId} — "${announcement.title}"`,
+    );
+
+    const rawData = announcement.rawData as BkRawData;
+    const orders: BkOrder[] = Array.isArray(rawData?.orders)
+      ? rawData.orders
+      : [];
+
+    const itemsToCreate =
+      orders.length > 0
+        ? this.buildItemsFromOrders(orders)
+        : this.buildGeneralItem(announcement.title, announcement.description);
+
+    this.logger.log(
+      `Building ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
+    );
+
+    // Usuń stare itemy i wstaw nowe atomowo
+    await this.prisma.$transaction([
+      this.prisma.announcementItem.deleteMany({
+        where: { announcementId },
+      }),
+      this.prisma.announcementItem.createMany({
+        data: itemsToCreate.map((item, index) => ({
+          announcementId,
+          itemIndex: index,
+          title: item.title,
+          description: item.description ?? null,
+          searchContext: item.searchContext,
+          price: item.price ?? null,
+          status: "PENDING" as const,
+        })),
+      }),
+    ]);
+
+    this.logger.log(
+      `Saved ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
+    );
+  }
+
+  /**
+   * Placeholder dla przyszłego workera embeddings.
+   * Wywoływany przez BullMQ job per-item po zakończeniu processAnnouncementToItems.
+   *
+   * @param itemId UUID rekordu AnnouncementItem
+   */
+  async generateItemEmbedding(itemId: string): Promise<void> {
+    // TODO (Krok 2): Wywołać LangChain + OpenAI embeddings:
+    //
+    // 1. Pobrać AnnouncementItem.searchContext
+    // 2. Wywołać openai.embeddings.create({ model: "text-embedding-3-small", input: searchContext })
+    // 3. Zapisać wektor do pola `embedding` przez raw SQL (pgvector nie wspiera Prisma bez raw):
+    //    await this.prisma.$executeRaw`
+    //      UPDATE announcement_items
+    //      SET embedding = ${vector}::vector, status = 'EMBEDDED'
+    //      WHERE id = ${itemId}::uuid
+    //    `
+    // 4. W razie błędu ustawić status = 'ERROR' i zalogować.
+    this.logger.warn(
+      `generateItemEmbedding called for ${itemId} — not yet implemented`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private buildItemsFromOrders(orders: BkOrder[]) {
+    return orders.map((order) => {
+      const orderItems: BkOrderItem[] = Array.isArray(order.order_items)
+        ? order.order_items
+        : [];
+
+      // Łączymy opisy z wszystkich order_items danej części
+      const descriptions = orderItems
+        .map((oi) => oi.description)
+        .filter((d): d is string => !!d && d.trim().length > 0);
+
+      // Spłaszczamy kody CPV ze wszystkich order_items
+      const cpvNames = orderItems
+        .flatMap((oi) => oi.cpv_items ?? [])
+        .map((cpv) => `${cpv.code} ${cpv.name}`)
+        .filter((v, i, arr) => arr.indexOf(v) === i); // deduplikacja
+
+      const title = order.title ?? `Część ${order.id}`;
+      const description = descriptions.join("\n\n") || null;
+
+      const searchContext = this.buildSearchContext(title, description, cpvNames);
+
+      // Wartość szacunkowa — najpierw z orders.estimated_value, fallback z pierwszego order_item
+      const rawPrice =
+        order.estimated_value ??
+        orderItems.find((oi) => oi.estimated_value != null)?.estimated_value ??
+        null;
+
+      return {
+        title,
+        description,
+        searchContext,
+        price: rawPrice != null ? rawPrice : null,
+      };
+    });
+  }
+
+  private buildGeneralItem(
+    title: string,
+    description: string | null,
+  ) {
+    return [
+      {
+        title,
+        description,
+        searchContext: this.buildSearchContext(title, description, []),
+        price: null,
+      },
+    ];
+  }
+
+  private buildSearchContext(
+    title: string,
+    description: string | null,
+    cpvNames: string[],
+  ): string {
+    const parts: string[] = [`TYTUŁ: ${title}`];
+
+    if (description) {
+      // Skracamy opis do 1000 znaków żeby nie przekroczyć limitu tokenów
+      const truncated =
+        description.length > 1000
+          ? `${description.slice(0, 1000)}…`
+          : description;
+      parts.push(`OPIS: ${truncated}`);
+    }
+
+    if (cpvNames.length > 0) {
+      parts.push(`KODY CPV: ${cpvNames.join("; ")}`);
+    }
+
+    return parts.join(" | ");
+  }
+}
