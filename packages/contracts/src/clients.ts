@@ -68,6 +68,7 @@ export const clientMatchAnnouncementSchema = z.object({
   sourceSystem: z.string(),
   externalId: z.string(),
   publishedAt: z.string().nullable(),
+  deadlineAt: z.string().nullable(),
   valueMin: z.string().nullable(),
   valueMax: z.string().nullable(),
 });

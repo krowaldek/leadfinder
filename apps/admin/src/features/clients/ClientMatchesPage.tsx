@@ -1,13 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { format } from "date-fns";
+import { pl } from "date-fns/locale";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search } from "lucide-react";
 import { DataTable, type ColumnDef } from "../../../components/data-table";
 import type { ClientMatchResponse } from "@leadfinder/contracts";
 import { fetchClients, fetchClientMatches, updateMatchStatus } from "./clients-api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ── Labels ───────────────────────────────────────────────────────────────────
@@ -32,7 +34,7 @@ const KIND_LABELS: Record<string, string> = {
 
 // ── Sorting ──────────────────────────────────────────────────────────────────
 
-type SortCol = "title" | "similarity" | "publishedAt" | "status";
+type SortCol = "title" | "similarity" | "deadlineAt" | "publishedAt";
 type SortDir = "asc" | "desc";
 
 function SortIcon({
@@ -52,22 +54,46 @@ function SortIcon({
   );
 }
 
+function SortHeader({
+  col,
+  label,
+  sortCol,
+  sortDir,
+  onToggle,
+}: {
+  col: SortCol;
+  label: string;
+  sortCol: SortCol;
+  sortDir: SortDir;
+  onToggle: (col: SortCol) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(col)}
+      className="flex items-center text-xs font-medium hover:text-foreground"
+    >
+      {label}
+      <SortIcon col={col} sortCol={sortCol} sortDir={sortDir} />
+    </button>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export function ClientMatchesPage() {
   const [selectedClientId, setSelectedClientId] = useState<string>("");
-  const [sortCol, setSortCol] = useState<SortCol>("similarity");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortCol, setSortCol] = useState<SortCol>("deadlineAt");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [hideDismissed, setHideDismissed] = useState(true);
+  const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
 
-  // All clients for dropdown (high limit — admin panel never exceeds a few hundred)
   const clientsQuery = useQuery({
     queryKey: ["clients", 1, 200],
     queryFn: () => fetchClients(1, 200),
   });
 
-  // Matches for selected client
   const matchesQuery = useQuery({
     queryKey: ["client-matches", selectedClientId],
     queryFn: () => fetchClientMatches(selectedClientId),
@@ -97,21 +123,37 @@ export function ClientMatchesPage() {
     }
   }
 
-  // Stats
   const allMatches = matchesQuery.data?.data ?? [];
   const total = matchesQuery.data?.meta.total ?? 0;
   const shortlisted = allMatches.filter((m) => m.status === "SHORTLISTED").length;
   const dismissed = allMatches.filter((m) => m.status === "DISMISSED").length;
 
-  // Filtered + sorted rows
   const displayedMatches = useMemo(() => {
-    const rows = hideDismissed
+    let rows = hideDismissed
       ? allMatches.filter((m) => m.status !== "DISMISSED")
       : allMatches;
 
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter(
+        (m) =>
+          m.announcementItem.title.toLowerCase().includes(q) ||
+          (m.announcementItem.description ?? "").toLowerCase().includes(q),
+      );
+    }
+
     return [...rows].sort((a, b) => {
       let cmp = 0;
-      if (sortCol === "similarity") {
+
+      if (sortCol === "deadlineAt") {
+        const da = a.announcementItem.announcement.deadlineAt ?? "";
+        const db = b.announcementItem.announcement.deadlineAt ?? "";
+        // Rekordy bez terminu idą na koniec zawsze
+        if (!da && !db) cmp = 0;
+        else if (!da) return 1;
+        else if (!db) return -1;
+        else cmp = da.localeCompare(db);
+      } else if (sortCol === "similarity") {
         cmp = a.similarity - b.similarity;
       } else if (sortCol === "title") {
         cmp = a.announcementItem.title.localeCompare(b.announcementItem.title, "pl");
@@ -119,12 +161,16 @@ export function ClientMatchesPage() {
         const da = a.announcementItem.announcement.publishedAt ?? "";
         const db = b.announcementItem.announcement.publishedAt ?? "";
         cmp = da.localeCompare(db);
-      } else if (sortCol === "status") {
-        cmp = a.status.localeCompare(b.status);
       }
+
+      // Drugorzędne sortowanie po similarity desc gdy col != similarity
+      if (cmp === 0 && sortCol !== "similarity") {
+        cmp = b.similarity - a.similarity;
+      }
+
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [allMatches, hideDismissed, sortCol, sortDir]);
+  }, [allMatches, hideDismissed, search, sortCol, sortDir]);
 
   // ── Columns ─────────────────────────────────────────────────────────────────
 
@@ -132,14 +178,7 @@ export function ClientMatchesPage() {
     {
       id: "title",
       header: (
-        <button
-          type="button"
-          onClick={() => toggleSort("title")}
-          className="flex items-center text-xs font-medium hover:text-foreground"
-        >
-          Ogłoszenie
-          <SortIcon col="title" sortCol={sortCol} sortDir={sortDir} />
-        </button>
+        <SortHeader col="title" label="Ogłoszenie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
       ),
       cell: ({ row }) => (
         <div className="max-w-sm">
@@ -169,16 +208,40 @@ export function ClientMatchesPage() {
       },
     },
     {
+      id: "deadlineAt",
+      header: (
+        <SortHeader col="deadlineAt" label="Termin składania" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
+      ),
+      cell: ({ row }) => {
+        const d = row.announcementItem.announcement.deadlineAt;
+        if (!d) return <span className="text-xs text-muted-foreground">—</span>;
+        const date = new Date(d);
+        const now = new Date();
+        const diffMs = date.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        const urgent = diffDays >= 0 && diffDays <= 3;
+        const past = diffDays < 0;
+        return (
+          <div className="whitespace-nowrap">
+            <p className={cn("text-sm font-medium", urgent && "text-yellow-600 dark:text-yellow-400", past && "text-muted-foreground line-through")}>
+              {format(date, "dd.MM.yyyy", { locale: pl })}
+            </p>
+            <p className={cn("text-xs", urgent && "text-yellow-600 dark:text-yellow-400", past ? "text-muted-foreground" : "text-muted-foreground")}>
+              {format(date, "HH:mm")}
+              {past
+                ? " · po terminie"
+                : urgent
+                  ? ` · za ${diffDays} ${diffDays === 1 ? "dzień" : "dni"}`
+                  : ` · za ${diffDays} dni`}
+            </p>
+          </div>
+        );
+      },
+    },
+    {
       id: "similarity",
       header: (
-        <button
-          type="button"
-          onClick={() => toggleSort("similarity")}
-          className="flex items-center text-xs font-medium hover:text-foreground"
-        >
-          Dopasowanie
-          <SortIcon col="similarity" sortCol={sortCol} sortDir={sortDir} />
-        </button>
+        <SortHeader col="similarity" label="Dopasowanie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
       ),
       cell: ({ row }) => {
         const pct = Math.round(row.similarity * 100);
@@ -188,11 +251,7 @@ export function ClientMatchesPage() {
               <div
                 className={cn(
                   "h-full rounded-full",
-                  pct >= 70
-                    ? "bg-green-500"
-                    : pct >= 50
-                      ? "bg-yellow-500"
-                      : "bg-muted-foreground/40",
+                  pct >= 70 ? "bg-green-500" : pct >= 50 ? "bg-yellow-500" : "bg-muted-foreground/40",
                 )}
                 style={{ width: `${pct}%` }}
               />
@@ -203,70 +262,33 @@ export function ClientMatchesPage() {
       },
     },
     {
-      id: "publishedAt",
-      header: (
-        <button
-          type="button"
-          onClick={() => toggleSort("publishedAt")}
-          className="flex items-center text-xs font-medium hover:text-foreground"
-        >
-          Opublikowano
-          <SortIcon col="publishedAt" sortCol={sortCol} sortDir={sortDir} />
-        </button>
-      ),
-      cell: ({ row }) => {
-        const d = row.announcementItem.announcement.publishedAt;
-        return d ? (
-          <span className="text-sm">{format(new Date(d), "dd.MM.yyyy")}</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        );
-      },
-    },
-    {
-      id: "status",
-      header: (
-        <button
-          type="button"
-          onClick={() => toggleSort("status")}
-          className="flex items-center text-xs font-medium hover:text-foreground"
-        >
-          Status
-          <SortIcon col="status" sortCol={sortCol} sortDir={sortDir} />
-        </button>
-      ),
-      cell: ({ row }) => (
-        <select
-          value={row.status}
-          onChange={(e) =>
-            statusMutation.mutate({
-              matchId: row.id,
-              status: e.target.value as "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED",
-            })
-          }
-          className="flex h-7 rounded-lg border border-input bg-transparent px-2 py-0.5 text-xs outline-none focus-visible:border-ring"
-        >
-          {Object.entries(MATCH_STATUS_LABELS).map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </select>
-      ),
-    },
-    {
-      id: "link",
+      id: "actions",
       header: "",
       cell: ({ row }) => (
-        <a
-          href={row.announcementItem.announcement.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-        >
-          Otwórz
-          <ExternalLink className="size-3" />
-        </a>
+        <div className="flex items-center gap-3">
+          <select
+            value={row.status}
+            onChange={(e) =>
+              statusMutation.mutate({
+                matchId: row.id,
+                status: e.target.value as "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED",
+              })
+            }
+            className="flex h-7 rounded-lg border border-input bg-transparent px-2 py-0.5 text-xs outline-none focus-visible:border-ring"
+          >
+            {Object.entries(MATCH_STATUS_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <a
+            href={row.announcementItem.announcement.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Otwórz <ExternalLink className="size-3" />
+          </a>
+        </div>
       ),
     },
   ];
@@ -277,29 +299,39 @@ export function ClientMatchesPage() {
 
   return (
     <div className="grid gap-6">
-      {/* Toolbar: client selector + filter */}
+      {/* Toolbar */}
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="client-select"
-            className="text-xs font-medium text-muted-foreground"
-          >
+          <label htmlFor="client-select" className="text-xs font-medium text-muted-foreground">
             Klient
           </label>
           <select
             id="client-select"
             value={selectedClientId}
-            onChange={(e) => setSelectedClientId(e.target.value)}
+            onChange={(e) => {
+              setSelectedClientId(e.target.value);
+              setSearch("");
+            }}
             className="flex h-8 min-w-[260px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <option value="">— wybierz klienta —</option>
             {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.companyName}
-              </option>
+              <option key={c.id} value={c.id}>{c.companyName}</option>
             ))}
           </select>
         </div>
+
+        {selectedClientId && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Szukaj w ogłoszeniach..."
+              className="h-8 w-56 pl-8 text-sm"
+            />
+          </div>
+        )}
 
         <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
           <input
@@ -312,14 +344,12 @@ export function ClientMatchesPage() {
         </label>
       </div>
 
-      {/* Stats cards — visible only after client is selected */}
+      {/* Stats */}
       {selectedClientId && (
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Wszystkich dopasowań
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Wszystkich dopasowań</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-3xl font-semibold">{total}</p>
@@ -328,9 +358,7 @@ export function ClientMatchesPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Shortlist
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Shortlist</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-3xl font-semibold">{shortlisted}</p>
@@ -339,9 +367,7 @@ export function ClientMatchesPage() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Odrzuconych
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Odrzuconych</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-3xl font-semibold">{dismissed}</p>
@@ -358,16 +384,15 @@ export function ClientMatchesPage() {
         isLoading={matchesQuery.isLoading}
         emptyState={
           !selectedClientId
-            ? {
-                title: "Wybierz klienta",
-                description: "Wybierz klienta z listy powyżej, aby zobaczyć dopasowania.",
-              }
-            : {
-                title: "Brak dopasowań",
-                description: hideDismissed
-                  ? "Brak wynikow - odznacz filtr 'Ukryj odrzucone', aby zobaczyc wszystkie."
-                  : "Ten klient nie ma jeszcze żadnych dopasowań.",
-              }
+            ? { title: "Wybierz klienta", description: "Wybierz klienta z listy powyżej, aby zobaczyć dopasowania." }
+            : search
+              ? { title: "Brak wyników", description: `Brak ogłoszeń pasujących do "${search}".` }
+              : {
+                  title: "Brak dopasowań",
+                  description: hideDismissed
+                    ? "Brak wynikow - odznacz filtr 'Ukryj odrzucone', aby zobaczyc wszystkie."
+                    : "Ten klient nie ma jeszcze żadnych dopasowań.",
+                }
         }
       />
     </div>

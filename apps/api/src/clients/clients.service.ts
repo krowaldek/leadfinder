@@ -107,6 +107,7 @@ export class ClientsService {
                 sourceSystem: true,
                 externalId: true,
                 publishedAt: true,
+                deadlineAt: true,
                 valueMin: true,
                 valueMax: true,
               },
@@ -138,6 +139,8 @@ export class ClientsService {
             externalId: m.announcementItem.announcement.externalId,
             publishedAt:
               m.announcementItem.announcement.publishedAt?.toISOString() ?? null,
+            deadlineAt:
+              m.announcementItem.announcement.deadlineAt?.toISOString() ?? null,
             valueMin:
               m.announcementItem.announcement.valueMin?.toString() ?? null,
             valueMax:
