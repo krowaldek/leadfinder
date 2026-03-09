@@ -1,7 +1,11 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { ChatOpenAI } from "@langchain/openai";
+import { HumanMessage } from "@langchain/core/messages";
 import { PrismaService } from "../database/prisma.service.js";
 import { ClientMatchingService } from "./client-matching.service.js";
-import type { ClientProfileFields } from "@leadfinder/contracts";
+import type { ClientProfileFields, UpdateClient } from "@leadfinder/contracts";
+import type { AppEnv } from "../config/env.js";
 
 const SCOPE_LABELS = {
   NATIONAL: "cała Polska",
@@ -17,12 +21,15 @@ export class ClientsService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ClientMatchingService)
     private readonly matchingService: ClientMatchingService,
+    @Inject(ConfigService)
+    private readonly config: ConfigService<AppEnv>,
   ) {}
 
   async createFromProfile(
     fields: ClientProfileFields,
   ): Promise<{ client: ReturnType<ClientsService["serializeClient"]>; matchCount: number }> {
-    const profileSummary = this.buildProfileSummary(fields);
+    const basicSummary = this.buildProfileSummary(fields);
+    const profileSummary = await this.enrichProfileForEmbedding(fields, basicSummary);
 
     const client = await this.prisma.client.create({
       data: {
@@ -165,6 +172,7 @@ export class ClientsService {
       contactPersonName: string;
       contactPersonRole: string;
       profileSummary: string;
+      negativeKeywords: string[];
       status: string;
       createdAt: Date;
       updatedAt: Date;
@@ -181,6 +189,7 @@ export class ClientsService {
       contactPersonName: client.contactPersonName,
       contactPersonRole: client.contactPersonRole,
       profileSummary: client.profileSummary,
+      negativeKeywords: client.negativeKeywords,
       status: client.status as "ACTIVE" | "INACTIVE",
       matchCount,
       createdAt: client.createdAt.toISOString(),
@@ -188,18 +197,136 @@ export class ClientsService {
     };
   }
 
-  private buildProfileSummary(fields: ClientProfileFields): string {
+  async updateClient(
+    id: string,
+    data: UpdateClient,
+  ): Promise<ReturnType<ClientsService["serializeClient"]>> {
+    const existing = await this.prisma.client.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("Client not found");
+
+    const merged = {
+      companyName: data.companyName ?? existing.companyName,
+      industry: data.industry ?? existing.industry,
+      geographicScope: (data.geographicScope ?? existing.geographicScope) as "NATIONAL" | "REGIONAL" | "LOCAL",
+      geographicDetails:
+        data.geographicDetails !== undefined
+          ? data.geographicDetails
+          : existing.geographicDetails,
+      budgetDescription: data.budgetDescription ?? existing.budgetDescription,
+      contactPersonName: data.contactPersonName ?? existing.contactPersonName,
+      contactPersonRole: data.contactPersonRole ?? existing.contactPersonRole,
+      negativeKeywords: data.negativeKeywords ?? existing.negativeKeywords,
+    };
+
+    const basicSummary = this.buildProfileSummary(merged);
+    const profileSummary = await this.enrichProfileForEmbedding(merged, basicSummary);
+
+    // Nullify the pgvector embedding via raw SQL (Unsupported type, not settable via Prisma client)
+    await this.prisma.$executeRaw`
+      UPDATE clients SET "profileEmbedding" = NULL WHERE id = ${id}::uuid
+    `;
+
+    const updated = await this.prisma.client.update({
+      where: { id },
+      data: {
+        companyName: merged.companyName,
+        industry: merged.industry,
+        geographicScope: merged.geographicScope,
+        geographicDetails: merged.geographicDetails ?? null,
+        budgetDescription: merged.budgetDescription,
+        contactPersonName: merged.contactPersonName,
+        contactPersonRole: merged.contactPersonRole,
+        negativeKeywords: merged.negativeKeywords,
+        profileSummary,
+      },
+    });
+
+    this.logger.log(`Updated client: ${updated.companyName} (${updated.id})`);
+
+    const matchCount = await this.prisma.clientMatch.count({ where: { clientId: id } });
+    return this.serializeClient(updated, matchCount);
+  }
+
+  private async enrichProfileForEmbedding(
+    fields: ClientProfileFields & { negativeKeywords?: string[] },
+    basicSummary: string,
+  ): Promise<string> {
+    const apiKey = this.config.get<string>("OPENAI_API_KEY") ?? "";
+    if (!apiKey || !apiKey.startsWith("sk-") || apiKey.includes("xxx")) {
+      this.logger.warn("OPENAI_API_KEY not configured — skipping profile enrichment, using basic summary.");
+      return basicSummary;
+    }
+
+    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const llm = new ChatOpenAI({ apiKey, model: chatModel, temperature: 0.3 });
+
+    const scope = SCOPE_LABELS[fields.geographicScope];
+    const geo = fields.geographicDetails
+      ? `${scope} (${fields.geographicDetails})`
+      : scope;
+
+    const negSection =
+      fields.negativeKeywords && fields.negativeKeywords.length > 0
+        ? `\n\nFirma NIE jest zainteresowana następującymi zakresami i je wyklucza (pomiń je w profilu): ${fields.negativeKeywords.join(", ")}`
+        : "";
+
+    const prompt = `Jesteś ekspertem od zamówień publicznych i przetargów w Polsce (BZP, Baza Konkurencyjności, e-Zamówienia, platformy zakupowe).
+
+Na podstawie poniższego profilu firmy wygeneruj BOGATY PROFIL TECHNICZNY przeznaczony do przeszukiwania wektorowego ogłoszeń przetargowych.
+
+== PROFIL FIRMY ==
+Firma: ${fields.companyName}
+Branża/Specjalizacja: ${fields.industry}
+Zasięg geograficzny: ${geo}
+Skala zamówień: ${fields.budgetDescription}${negSection}
+
+== TWOJE ZADANIE ==
+Wygeneruj zwięzły tekst (max 350 słów) bogaty w:
+1. Specjalistyczne słownictwo branżowe używane w ogłoszeniach przetargowych
+2. Synonimy i alternatywne nazewnictwo tej samej działalności w języku zamówień publicznych
+3. Powiązane zakresy prac, dostaw lub usług, które firma z tej branży typowo realizuje
+4. Słowne odpowiedniki kodów CPV i terminologię z SIWZ/SWZ/OPZ
+5. Wyrazy kluczowe często pojawiające się w tytułach i opisach ogłoszeń dla tej branży
+
+WAŻNE:
+- Tekst ma być GĘSTY w słowa kluczowe — jest wejściem dla modelu embeddingowego, nie dla człowieka
+- Pisz po polsku, pełnymi zdaniami lub listami fraz
+- NIE włączaj wykluczeń do profilu — pisz wyłącznie to, czego firma SZUKA
+- NIE powtarzaj danych kontaktowych, budżetu ani zasięgu — skup się wyłącznie na terminologii branżowej
+- NIE dodawaj nagłówków, wstępów ani komentarzy — tylko sam tekst profilu`;
+
+    try {
+      const response = await llm.invoke([new HumanMessage(prompt)]);
+      const enriched = (response.content as string).trim();
+      if (enriched.length > 80) {
+        this.logger.log(`Profile enriched with technical synonyms for: ${fields.companyName}`);
+        return `${basicSummary}\n\n${enriched}`;
+      }
+    } catch (err) {
+      this.logger.warn(`Profile enrichment failed — using basic summary: ${String(err)}`);
+    }
+
+    return basicSummary;
+  }
+
+  private buildProfileSummary(fields: ClientProfileFields & { negativeKeywords?: string[] }): string {
     const scopeLabel = SCOPE_LABELS[fields.geographicScope];
     const geo = fields.geographicDetails
       ? `${scopeLabel} (${fields.geographicDetails})`
       : scopeLabel;
 
-    return [
+    const parts = [
       `FIRMA: ${fields.companyName}`,
       `BRANŻA: ${fields.industry}`,
       `ZASIĘG: ${geo}`,
       `BUDŻET: ${fields.budgetDescription}`,
       `KONTAKT: ${fields.contactPersonName} — ${fields.contactPersonRole}`,
-    ].join(" | ");
+    ];
+
+    if (fields.negativeKeywords && fields.negativeKeywords.length > 0) {
+      parts.push(`WYKLUCZENIA: ${fields.negativeKeywords.join(", ")}`);
+    }
+
+    return parts.join(" | ");
   }
 }

@@ -74,7 +74,7 @@ export class SearchService {
 
     let effectiveQuery = normalizedQuery;
     let expansionNotes: string[] = [];
-    if (mode === "QUERY_EXPANSION") {
+    if (mode === "QUERY_EXPANSION" && this.hasValidOpenAiKey()) {
       const expanded = await this.expandQuery(normalizedQuery);
       effectiveQuery = expanded.effectiveQuery;
       expansionNotes = expanded.notes;
@@ -94,7 +94,7 @@ export class SearchService {
 
     let ranked: SearchCandidate[] = candidates;
 
-    if (mode === "RERANK") {
+    if (mode === "RERANK" && this.hasValidOpenAiKey()) {
       const reranked = await this.applyRerank(normalizedQuery, ranked, limit);
       ranked = reranked;
     }
@@ -140,6 +140,11 @@ export class SearchService {
     };
   }
 
+  private hasValidOpenAiKey(): boolean {
+    const key = this.config.get<string>("OPENAI_API_KEY") ?? "";
+    return key.startsWith("sk-") && !key.includes("xxx");
+  }
+
   private async collectCandidatesByMode(
     mode: SearchMode,
     originalQuery: string,
@@ -147,6 +152,21 @@ export class SearchService {
     threshold: number,
     candidateLimit: number,
   ): Promise<SearchCandidate[]> {
+    const canUseEmbeddings = this.hasValidOpenAiKey();
+
+    if (!canUseEmbeddings) {
+      this.logger.warn(
+        "OPENAI_API_KEY not configured or is a placeholder — falling back to keyword-only search.",
+      );
+      const keywordRows = await this.runKeywordSearch(effectiveQuery, candidateLimit);
+      const merged = this.mergeCandidateRows([], keywordRows);
+      return merged.map((candidate) => ({
+        ...candidate,
+        score: candidate.keyword ?? 0,
+        explanations: ["Wyszukiwanie pełnotekstowe (brak klucza OpenAI — tryb awaryjny)."],
+      }));
+    }
+
     if (mode === "VECTOR") {
       const vectorStr = await this.embedQuery(effectiveQuery);
       const vectorRows = await this.runVectorSearch(vectorStr, candidateLimit, threshold);

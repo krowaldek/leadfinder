@@ -25,6 +25,18 @@ export const clientProfileFieldsSchema = z.object({
 });
 export type ClientProfileFields = z.infer<typeof clientProfileFieldsSchema>;
 
+export const updateClientSchema = z.object({
+  companyName: z.string().trim().min(1).optional(),
+  industry: z.string().trim().min(1).optional(),
+  geographicScope: geographicScopeSchema.optional(),
+  geographicDetails: z.string().trim().nullable().optional(),
+  budgetDescription: z.string().trim().min(1).optional(),
+  contactPersonName: z.string().trim().min(1).optional(),
+  contactPersonRole: z.string().trim().min(1).optional(),
+  negativeKeywords: z.array(z.string().trim().min(1)).optional(),
+});
+export type UpdateClient = z.infer<typeof updateClientSchema>;
+
 export const promptRequestSchema = z.object({
   sessionId: z.string().optional(),
   message: z.string().trim().min(1).max(2000),
@@ -41,6 +53,7 @@ export const clientResponseSchema = z.object({
   contactPersonName: z.string(),
   contactPersonRole: z.string(),
   profileSummary: z.string(),
+  negativeKeywords: z.array(z.string()),
   status: clientStatusSchema,
   matchCount: z.number(),
   createdAt: z.string(),

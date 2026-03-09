@@ -4,7 +4,9 @@ import {
   clientMatchesResponseSchema,
   promptResponseSchema,
   updateMatchStatusSchema,
+  clientResponseSchema,
   type ClientMatchStatus,
+  type UpdateClient,
 } from "@leadfinder/contracts";
 
 export async function fetchClients(page = 1, limit = 20) {
@@ -28,6 +30,11 @@ export async function sendPromptMessage(
 export async function rematchClient(clientId: string) {
   const response = await api.post(`/clients/${clientId}/rematch`);
   return response.data as { queued: true };
+}
+
+export async function updateClient(clientId: string, data: UpdateClient) {
+  const response = await api.patch(`/clients/${clientId}`, data);
+  return clientResponseSchema.parse(response.data.data);
 }
 
 export async function updateMatchStatus(

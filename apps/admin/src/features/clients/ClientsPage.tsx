@@ -17,6 +17,7 @@ import {
   rematchClient,
   updateMatchStatus,
 } from "./clients-api";
+import { ClientEditDialog } from "../../components/ClientEditDialog";
 
 const PAGE_SIZE = 20;
 
@@ -220,6 +221,7 @@ function MatchesDrawer({
 export function ClientsPage() {
   const [page, setPage] = useState(1);
   const [selectedClient, setSelectedClient] = useState<ClientResponse | null>(null);
+  const [editingClient, setEditingClient] = useState<ClientResponse | null>(null);
   const queryClient = useQueryClient();
 
   const clientsQuery = useQuery({
@@ -300,6 +302,11 @@ export function ClientsPage() {
         onClick: (row) => setSelectedClient(row),
       },
       {
+        id: "edit",
+        label: "Edytuj",
+        onClick: (row) => setEditingClient(row),
+      },
+      {
         id: "rematch",
         label: "Przelicz",
         onClick: (row) => rematchMutation.mutate(row.id),
@@ -369,6 +376,15 @@ export function ClientsPage() {
           }}
         />
       )}
+
+      <ClientEditDialog
+        key={editingClient?.id ?? ""}
+        open={!!editingClient}
+        client={editingClient}
+        onOpenChange={(open) => {
+          if (!open) setEditingClient(null);
+        }}
+      />
     </div>
   );
 }

@@ -24,8 +24,10 @@ import { CLIENT_MATCHING_QUEUE, ClientMatchingJob } from "./client-matching.cons
 import {
   promptRequestSchema,
   updateMatchStatusSchema,
+  updateClientSchema,
   type PromptRequest,
   type UpdateMatchStatus,
+  type UpdateClient,
 } from "@leadfinder/contracts";
 
 @Controller("clients")
@@ -73,6 +75,30 @@ export class ClientsController {
   @Get(":id/matches")
   async getMatches(@Param("id") id: string) {
     return this.clientsService.getMatches(id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Patch(":id")
+  async updateClient(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(updateClientSchema)) body: UpdateClient,
+  ) {
+    const updated = await this.clientsService.updateClient(id, body);
+
+    // Queue rematch so new embedding + penalties are recalculated
+    await this.matchingQueue.add(
+      ClientMatchingJob.MATCH_CLIENT,
+      { clientId: id },
+      {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 10 },
+      },
+    );
+
+    return { data: updated, rematch: "queued" };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
