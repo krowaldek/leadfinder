@@ -17,7 +17,7 @@ const CONCURRENCY_LIMIT = 3;
 @Injectable()
 export class BkScraperService {
   private readonly logger = new Logger(BkScraperService.name);
-  private readonly apiBaseUrl: string;
+  private readonly apiBaseUrl?: string;
 
   constructor(
     @Inject(PrismaService)
@@ -28,10 +28,14 @@ export class BkScraperService {
     private readonly normalization: NormalizationService,
   ) {
     const url = this.config.get<string>("BK_API_BASE_URL");
-    if (!url) {
-      throw new Error("BK_API_BASE_URL is not configured in environment.");
+    if (url) {
+      this.apiBaseUrl = url;
+      return;
     }
-    this.apiBaseUrl = url;
+
+    this.logger.warn(
+      "BK_API_BASE_URL is not configured. BK scraper is disabled until this env var is provided.",
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -39,6 +43,11 @@ export class BkScraperService {
   // ---------------------------------------------------------------------------
 
   async discoverNewIds(): Promise<string[]> {
+    if (!this.apiBaseUrl) {
+      this.logger.warn("BK scraper is disabled: missing BK_API_BASE_URL.");
+      return [];
+    }
+
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const url =
       `${this.apiBaseUrl}/announcements/search` +
@@ -81,6 +90,11 @@ export class BkScraperService {
   // ---------------------------------------------------------------------------
 
   async fetchAndSaveDetails(id: string): Promise<void> {
+    if (!this.apiBaseUrl) {
+      this.logger.warn("BK scraper is disabled: missing BK_API_BASE_URL.");
+      return;
+    }
+
     const url = `${this.apiBaseUrl}/announcements/${id}`;
 
     try {
@@ -144,6 +158,13 @@ export class BkScraperService {
   // ---------------------------------------------------------------------------
 
   async run(): Promise<void> {
+    if (!this.apiBaseUrl) {
+      this.logger.warn(
+        "Skipping BK scraper run because BK_API_BASE_URL is not configured.",
+      );
+      return;
+    }
+
     this.logger.log("BK scraper run started");
 
     let newIds: string[];

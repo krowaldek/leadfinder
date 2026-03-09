@@ -21,6 +21,7 @@ import {
   SOURCE_LABELS,
   STATUS_LABELS,
 } from "@/components/RawDataDialog";
+import { AnnouncementAiSearchDialog } from "@/components/AnnouncementAiSearchDialog";
 
 const PAGE_SIZE = 20;
 
@@ -178,6 +179,7 @@ export function AnnouncementsPage() {
   const [sourceFilter, setSourceFilter] = useState<AnnouncementSource | "ALL">("ALL");
   const [statusFilter, setStatusFilter] = useState<AnnouncementStatus | "ALL">("ALL");
   const [selected, setSelected] = useState<Announcement | null>(null);
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
 
   const query = useQuery({
     queryKey: [
@@ -339,6 +341,15 @@ export function AnnouncementsPage() {
             ogłoszeń
           </p>
         )}
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={() => setAiDialogOpen(true)}
+            className="rounded-full border border-stone-950/15 bg-white/80 px-4 py-2 text-xs uppercase tracking-[0.2em] text-stone-700 transition hover:border-amber-500 hover:text-amber-700 dark:border-stone-600 dark:bg-stone-800/50 dark:text-stone-200 dark:hover:border-amber-500 dark:hover:text-amber-400"
+          >
+            AI Match Lab
+          </button>
+        </div>
       </motion.div>
 
       {/* Scraper control */}
@@ -409,6 +420,10 @@ export function AnnouncementsPage() {
         announcement={selected}
         open={!!selected}
         onClose={() => setSelected(null)}
+      />
+      <AnnouncementAiSearchDialog
+        open={aiDialogOpen}
+        onOpenChange={setAiDialogOpen}
       />
     </div>
   );

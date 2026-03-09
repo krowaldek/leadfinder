@@ -18,19 +18,23 @@ export class SearchController {
   async search(
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQuery,
   ) {
-    const results = await this.searchService.semanticSearch(
+    const result = await this.searchService.semanticSearch(
       query.q,
       query.limit,
       query.threshold,
+      query.mode,
     );
 
     return {
-      data: results,
+      data: result.items,
       meta: {
         query: query.q,
+        effectiveQuery: result.effectiveQuery,
+        mode: query.mode,
         limit: query.limit,
-        count: results.length,
+        count: result.items.length,
         threshold: query.threshold,
+        generatedAt: new Date().toISOString(),
       },
     };
   }

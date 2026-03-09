@@ -1,8 +1,10 @@
 import {
   announcementsListResponseSchema,
   announcementResponseSchema,
+  searchResponseSchema,
   type AnnouncementSource,
   type AnnouncementStatus,
+  type SearchMode,
 } from "@leadfinder/contracts";
 import { api } from "@/lib/api";
 
@@ -53,4 +55,36 @@ export interface QueueStatus {
 export async function fetchQueueStatus() {
   const response = await api.get("/scrapers/bk/queue-status");
   return response.data as QueueStatus;
+}
+
+export interface AiSearchParams {
+  q: string;
+  mode: SearchMode;
+  limit?: number;
+  threshold?: number;
+}
+
+export async function searchAnnouncementsAi({
+  q,
+  mode,
+  limit = 12,
+  threshold = 0.3,
+}: AiSearchParams) {
+  const response = await api.get("/search", {
+    params: {
+      q,
+      mode,
+      limit,
+      threshold,
+    },
+  });
+
+  const result = searchResponseSchema.safeParse(response.data);
+  if (!result.success) {
+    console.error("[searchAnnouncementsAi] Zod validation failed — issues:");
+    console.table(result.error.issues.map((i) => ({ path: i.path.join("."), code: i.code, message: i.message, received: (i as { received?: unknown }).received })));
+    console.error("[searchAnnouncementsAi] raw meta:", JSON.stringify(response.data?.meta, null, 2));
+    throw new Error(`Response validation failed: ${result.error.message}`);
+  }
+  return result.data;
 }
