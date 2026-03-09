@@ -1,8 +1,10 @@
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { format, formatDistanceToNow } from "date-fns";
+import { pl } from "date-fns/locale";
 import { motion } from "framer-motion";
 import { useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import {
   DataTable,
   type ColumnDef,
@@ -13,7 +15,7 @@ import {
   type AnnouncementSource,
   type AnnouncementStatus,
 } from "@leadfinder/contracts";
-import { fetchAnnouncements } from "./announcements-api";
+import { fetchAnnouncements, triggerScraper, fetchQueueStatus } from "./announcements-api";
 import {
   RawDataDialog,
   SOURCE_LABELS,
@@ -99,6 +101,76 @@ function FilterButton({
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+function ScraperPanel() {
+  const queryClient = useQueryClient();
+
+  const statusQuery = useQuery({
+    queryKey: ["scraper-queue-status"],
+    queryFn: fetchQueueStatus,
+    refetchInterval: 5000,
+  });
+
+  const triggerMutation = useMutation({
+    mutationFn: triggerScraper,
+    onSuccess: (data) => {
+      toast.success(`Scraper uruchomiony (job ${data.jobId})`);
+      void queryClient.invalidateQueries({ queryKey: ["scraper-queue-status"] });
+    },
+    onError: () => toast.error("Nie udało się uruchomić scrapera"),
+  });
+
+  const counts = statusQuery.data?.counts;
+  const lastRun = statusQuery.data?.recentCompleted?.[0];
+  const lastFailed = statusQuery.data?.recentFailed?.[0];
+  const isActive = (counts?.active ?? 0) > 0 || (counts?.waiting ?? 0) > 0;
+
+  return (
+    <div className="rounded-[2rem] border border-stone-900/10 bg-[#fcfaf6] p-5 dark:border-stone-700/60 dark:bg-stone-800/60">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            "h-2.5 w-2.5 rounded-full",
+            isActive ? "animate-pulse bg-amber-500" : "bg-emerald-500",
+          )} />
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">Scraper BK</p>
+            <p className="text-sm font-medium text-stone-800 dark:text-stone-200">
+              {isActive ? "Aktywny" : "Gotowy"}
+              {counts && (
+                <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">
+                  aktywne: {counts.active} · oczekujące: {counts.waiting} · ukończone: {counts.completed} · błędy: {counts.failed}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {lastRun?.finishedAt && (
+            <p className="text-xs text-stone-400 dark:text-stone-500">
+              Ostatni run:{" "}
+              <span className="text-stone-600 dark:text-stone-300">
+                {formatDistanceToNow(new Date(lastRun.finishedAt), { addSuffix: true, locale: pl })}
+              </span>
+              {lastFailed?.failedReason && (
+                <span className="ml-2 text-red-500">⚠ ostatni błąd: {lastFailed.failedReason.slice(0, 60)}</span>
+              )}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => triggerMutation.mutate()}
+            disabled={triggerMutation.isPending || isActive}
+            className="rounded-full bg-stone-950 px-5 py-2 text-xs font-medium uppercase tracking-[0.2em] text-stone-100 transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300"
+          >
+            {triggerMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom scraper"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function AnnouncementsPage() {
   const [search, setSearch] = useState("");
@@ -268,6 +340,9 @@ export function AnnouncementsPage() {
           </p>
         )}
       </motion.div>
+
+      {/* Scraper control */}
+      <ScraperPanel />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
