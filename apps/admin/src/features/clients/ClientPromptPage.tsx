@@ -1,11 +1,13 @@
 import { cn } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { motion, AnimatePresence } from "framer-motion";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { sendPromptMessage } from "./clients-api";
 import type { ClientResponse } from "@leadfinder/contracts";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface Message {
   role: "user" | "assistant";
@@ -17,11 +19,7 @@ const INITIAL_MESSAGE: Message = {
   text: "Cześć! Jestem asystentem Leadfinder 👋\nPomogę Ci założyć profil firmy, żeby dopasować odpowiednie ogłoszenia.\n\nZacznijmy — jak nazywa się Twoja firma?",
 };
 
-function CollectedDataBadges({
-  data,
-}: {
-  data: Record<string, unknown>;
-}) {
+function CollectedDataBadges({ data }: { data: Record<string, unknown> }) {
   const LABELS: Record<string, string> = {
     companyName: "Firma",
     industry: "Branża",
@@ -35,15 +33,12 @@ function CollectedDataBadges({
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-2 p-4">
+    <div className="flex flex-wrap gap-2 p-4 border-b">
       {entries.map(([k, v]) => (
-        <span
-          key={k}
-          className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300"
-        >
+        <Badge key={k} variant="secondary" className="gap-1">
           <span className="font-medium">{LABELS[k] ?? k}:</span>
           <span>{String(v)}</span>
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -55,12 +50,8 @@ export function ClientPromptPage() {
   const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
-  const [collectedData, setCollectedData] = useState<Record<string, unknown>>(
-    {},
-  );
-  const [createdClient, setCreatedClient] = useState<ClientResponse | null>(
-    null,
-  );
+  const [collectedData, setCollectedData] = useState<Record<string, unknown>>({});
+  const [createdClient, setCreatedClient] = useState<ClientResponse | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const sendMutation = useMutation({
@@ -73,12 +64,8 @@ export function ClientPromptPage() {
       if (res.status === "question") {
         setSessionId(res.sessionId);
         setCollectedData(res.collectedData as Record<string, unknown>);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: res.question },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", text: res.question }]);
       } else {
-        // created
         setCreatedClient(res.client);
         void queryClient.invalidateQueries({ queryKey: ["clients"] });
         const matchWord =
@@ -95,19 +82,13 @@ export function ClientPromptPage() {
           },
         ]);
       }
-      setTimeout(
-        () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
-        50,
-      );
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     },
     onError: () => {
       toast.error("Błąd komunikacji z asystentem");
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          text: "Przepraszam, wystąpił błąd. Spróbuj ponownie.",
-        },
+        { role: "assistant", text: "Przepraszam, wystąpił błąd. Spróbuj ponownie." },
       ]);
     },
   });
@@ -120,79 +101,64 @@ export function ClientPromptPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-280px)] min-h-[500px] flex-col">
-      {/* progress badges */}
+    <div className="flex h-[calc(100vh-280px)] min-h-[500px] flex-col rounded-lg border bg-background">
       <CollectedDataBadges data={collectedData} />
 
-      {/* messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-2">
-        <AnimatePresence initial={false}>
-          {messages.map((m, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className={cn("mb-4 flex", m.role === "user" ? "justify-end" : "justify-start")}
-            >
-              {m.role === "assistant" && (
-                <div className="mr-2 mt-1 h-7 w-7 shrink-0 rounded-full bg-amber-500 flex items-center justify-center text-white text-xs font-bold">
-                  AI
-                </div>
-              )}
-              <div
-                className={cn(
-                  "max-w-[75%] rounded-3xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
-                  m.role === "user"
-                    ? "bg-stone-900 text-stone-100 dark:bg-stone-700"
-                    : "bg-stone-100 text-stone-900 dark:bg-stone-800 dark:text-stone-100",
-                )}
-              >
-                {m.text}
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}
+          >
+            {m.role === "assistant" && (
+              <div className="mr-2 mt-1 size-7 shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
+                AI
               </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+            )}
+            <div
+              className={cn(
+                "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
+                m.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-foreground",
+              )}
+            >
+              {m.text}
+            </div>
+          </div>
+        ))}
 
         {sendMutation.isPending && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mb-4 flex justify-start"
-          >
-            <div className="mr-2 mt-1 h-7 w-7 shrink-0 rounded-full bg-amber-500 flex items-center justify-center text-white text-xs font-bold">
+          <div className="flex justify-start">
+            <div className="mr-2 mt-1 size-7 shrink-0 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
               AI
             </div>
-            <div className="rounded-3xl bg-stone-100 px-4 py-3 text-sm dark:bg-stone-800">
-              <span className="flex gap-1">
+            <div className="rounded-2xl bg-muted px-4 py-3 text-sm">
+              <span className="flex gap-1 items-center">
                 {[0, 1, 2].map((i) => (
-                  <motion.span
+                  <span
                     key={i}
-                    animate={{ opacity: [0.3, 1, 0.3] }}
-                    transition={{ repeat: Infinity, duration: 1, delay: i * 0.2 }}
-                    className="h-1.5 w-1.5 rounded-full bg-stone-400 dark:bg-stone-500"
+                    className="size-1.5 rounded-full bg-muted-foreground animate-pulse"
+                    style={{ animationDelay: `${i * 200}ms` }}
                   />
                 ))}
               </span>
             </div>
-          </motion.div>
+          </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* post-creation actions */}
+      {/* Post-creation actions */}
       {createdClient && (
-        <div className="border-t border-stone-200 px-4 py-3 dark:border-stone-700 flex gap-3 justify-center">
-          <button
-            type="button"
-            onClick={() => void navigate({ to: "/clients" })}
-            className="rounded-full bg-amber-500 px-6 py-2 text-sm font-medium text-white hover:bg-amber-600"
-          >
+        <div className="border-t px-4 py-3 flex gap-3 justify-center">
+          <Button onClick={() => void navigate({ to: "/clients" })}>
             Zobacz dopasowania →
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => {
               setMessages([INITIAL_MESSAGE]);
               setSessionId(undefined);
@@ -200,38 +166,30 @@ export function ClientPromptPage() {
               setCreatedClient(null);
               setInput("");
             }}
-            className="rounded-full border border-stone-300 px-6 py-2 text-sm text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
           >
             Dodaj kolejnego klienta
-          </button>
+          </Button>
         </div>
       )}
 
-      {/* input */}
+      {/* Input */}
       {!createdClient && (
-        <form
-          onSubmit={handleSubmit}
-          className="border-t border-stone-200 px-4 py-3 dark:border-stone-700"
-        >
+        <form onSubmit={handleSubmit} className="border-t px-4 py-3">
           <div className="flex gap-2">
-            <input
+            <Input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Napisz wiadomość…"
               disabled={sendMutation.isPending}
-              className="flex-1 rounded-full border border-stone-300 bg-white px-4 py-2 text-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:focus:border-amber-500 dark:focus:ring-amber-900/40"
             />
-            <button
-              type="submit"
-              disabled={!input.trim() || sendMutation.isPending}
-              className="rounded-full bg-amber-500 px-5 py-2 text-sm font-medium text-white transition hover:bg-amber-600 disabled:opacity-40"
-            >
+            <Button type="submit" disabled={!input.trim() || sendMutation.isPending}>
               Wyślij
-            </button>
+            </Button>
           </div>
         </form>
       )}
     </div>
   );
 }
+

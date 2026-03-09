@@ -1,8 +1,6 @@
-import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { motion } from "framer-motion";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link } from "@tanstack/react-router";
 import {
@@ -18,6 +16,15 @@ import {
   updateMatchStatus,
 } from "./clients-api";
 import { ClientEditDialog } from "../../components/ClientEditDialog";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 const PAGE_SIZE = 20;
 
@@ -27,15 +34,6 @@ const SCOPE_LABELS: Record<string, string> = {
   LOCAL: "Lokalny",
 };
 
-const SCOPE_CLASS: Record<string, string> = {
-  NATIONAL:
-    "bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-300",
-  REGIONAL:
-    "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
-  LOCAL:
-    "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-300",
-};
-
 const MATCH_STATUS_LABELS: Record<string, string> = {
   NEW: "Nowe",
   VIEWED: "Wyświetlone",
@@ -43,47 +41,30 @@ const MATCH_STATUS_LABELS: Record<string, string> = {
   SHORTLISTED: "Wybrane",
 };
 
-const MATCH_STATUS_CLASS: Record<string, string> = {
-  NEW: "bg-stone-100 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
-  VIEWED:
-    "bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-300",
-  DISMISSED:
-    "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-300",
-  SHORTLISTED:
-    "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
-};
-
-function Tag({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
+function matchStatusVariant(
+  status: string,
+): "default" | "secondary" | "outline" | "destructive" {
+  if (status === "SHORTLISTED") return "default";
+  if (status === "VIEWED") return "secondary";
+  if (status === "DISMISSED") return "destructive";
+  return "outline";
 }
 
 // ---------------------------------------------------------------------------
-// Match drawer
+// Match sheet (side panel)
 // ---------------------------------------------------------------------------
 
-function MatchesDrawer({
+function MatchesSheet({
   client,
+  open,
   onClose,
 }: {
   client: ClientResponse;
+  open: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+
   const matchesQuery = useQuery({
     queryKey: ["client-matches", client.id],
     queryFn: () => fetchClientMatches(client.id),
@@ -98,82 +79,50 @@ function MatchesDrawer({
       status: "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED";
     }) => updateMatchStatus(client.id, matchId, status),
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["client-matches", client.id],
-      });
+      void queryClient.invalidateQueries({ queryKey: ["client-matches", client.id] });
     },
     onError: () => toast.error("Błąd aktualizacji statusu"),
   });
 
   return (
-    <div className="fixed inset-0 z-40 flex">
-      {/* backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      {/* panel */}
-      <motion.div
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 28, stiffness: 280 }}
-        className="relative ml-auto flex h-full w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl dark:bg-stone-900"
-      >
-        <div className="flex items-center justify-between border-b border-stone-200 px-6 py-4 dark:border-stone-700">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-stone-500 dark:text-stone-400">
-              Dopasowania
-            </p>
-            <h3 className="mt-0.5 text-lg font-semibold text-stone-900 dark:text-stone-100">
-              {client.companyName}
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-stone-200 p-2 text-stone-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800"
-          >
-            ✕
-          </button>
-        </div>
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="flex flex-col p-0 gap-0">
+        <SheetHeader className="border-b px-6 py-4">
+          <p className="text-xs font-medium text-muted-foreground">Dopasowania</p>
+          <SheetTitle>{client.companyName}</SheetTitle>
+        </SheetHeader>
 
         <div className="flex-1 overflow-y-auto p-6">
           {matchesQuery.isLoading && (
-            <p className="text-center text-sm text-stone-500">Ładowanie…</p>
+            <p className="text-center text-sm text-muted-foreground">Ładowanie…</p>
           )}
           {matchesQuery.isError && (
-            <p className="text-center text-sm text-red-500">
-              Błąd ładowania dopasowań
-            </p>
+            <p className="text-center text-sm text-destructive">Błąd ładowania dopasowań</p>
           )}
           {matchesQuery.data?.data.length === 0 && (
-            <p className="text-center text-sm text-stone-500">
+            <p className="text-center text-sm text-muted-foreground">
               Brak dopasowań dla tego klienta.
             </p>
           )}
           <div className="space-y-4">
             {matchesQuery.data?.data.map((m: ClientMatchResponse) => (
-              <div
-                key={m.id}
-                className="rounded-2xl border border-stone-200 p-4 dark:border-stone-700"
-              >
+              <div key={m.id} className="rounded-lg border p-4">
                 <div className="mb-2 flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium text-stone-900 dark:text-stone-100 line-clamp-2">
+                  <p className="line-clamp-2 text-sm font-medium">
                     {m.announcementItem.title}
                   </p>
-                  <Tag className={MATCH_STATUS_CLASS[m.status]}>
+                  <Badge variant={matchStatusVariant(m.status)}>
                     {MATCH_STATUS_LABELS[m.status] ?? m.status}
-                  </Tag>
+                  </Badge>
                 </div>
-                <p className="mb-3 text-xs text-stone-500 dark:text-stone-400 line-clamp-2">
+                <p className="mb-3 line-clamp-2 text-xs text-muted-foreground">
                   {m.announcementItem.description}
                 </p>
                 <div className="flex items-center justify-between">
-                  <div className="flex gap-2 text-xs text-stone-400">
+                  <div className="flex gap-2 text-xs text-muted-foreground">
                     <span>
                       Podobieństwo:{" "}
-                      <span className="font-medium text-amber-600">
+                      <span className="font-medium text-foreground">
                         {(m.similarity * 100).toFixed(0)}%
                       </span>
                     </span>
@@ -182,7 +131,7 @@ function MatchesDrawer({
                         href={m.announcementItem.announcement.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="underline hover:text-amber-600"
+                        className="underline underline-offset-4 hover:text-foreground"
                       >
                         Otwórz
                       </a>
@@ -196,7 +145,7 @@ function MatchesDrawer({
                         status: e.target.value as "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED",
                       })
                     }
-                    className="rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                    className="flex h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     {Object.entries(MATCH_STATUS_LABELS).map(([v, l]) => (
                       <option key={v} value={v}>
@@ -209,8 +158,8 @@ function MatchesDrawer({
             ))}
           </div>
         </div>
-      </motion.div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -242,10 +191,8 @@ export function ClientsPage() {
         header: "Firma",
         cell: ({ row }) => (
           <div>
-            <p className="font-medium text-stone-900 dark:text-stone-100">
-              {row.companyName}
-            </p>
-            <p className="text-xs text-stone-500 dark:text-stone-400">
+            <p className="font-medium">{row.companyName}</p>
+            <p className="text-xs text-muted-foreground">
               {row.contactPersonName} · {row.contactPersonRole}
             </p>
           </div>
@@ -254,24 +201,18 @@ export function ClientsPage() {
       {
         id: "industry",
         header: "Branża",
-        cell: ({ row }) => (
-          <span className="text-sm text-stone-700 dark:text-stone-300">
-            {row.industry}
-          </span>
-        ),
+        cell: ({ row }) => <span className="text-sm">{row.industry}</span>,
       },
       {
         id: "geographicScope",
         header: "Zasięg",
         cell: ({ row }) => (
           <div>
-            <Tag className={SCOPE_CLASS[row.geographicScope]}>
+            <Badge variant="outline">
               {SCOPE_LABELS[row.geographicScope] ?? row.geographicScope}
-            </Tag>
+            </Badge>
             {row.geographicDetails && (
-              <p className="mt-1 text-xs text-stone-400 dark:text-stone-500">
-                {row.geographicDetails}
-              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{row.geographicDetails}</p>
             )}
           </div>
         ),
@@ -280,9 +221,7 @@ export function ClientsPage() {
         id: "matchCount",
         header: "Dopasowania",
         cell: ({ row }) => (
-          <span className="font-mono text-sm font-medium text-amber-700 dark:text-amber-400">
-            {row.matchCount}
-          </span>
+          <span className="font-mono text-sm font-medium">{row.matchCount}</span>
         ),
       },
       {
@@ -319,32 +258,47 @@ export function ClientsPage() {
   const meta = clientsQuery.data?.meta;
 
   return (
-    <div>
-      {/* stat cards */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Klientów ogółem"
-          value={meta?.total ?? "—"}
-          sub="w bazie"
-        />
-        <StatCard
-          label="Aktywnych"
-          value={meta?.total ?? "—"}
-          sub="status ACTIVE"
-        />
-        <StatCard
-          label="Strona"
-          value={`${page} / ${meta?.totalPages ?? "?"}`}
-          sub={`limit ${PAGE_SIZE}`}
-        />
+    <div className="grid gap-6">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Klientów ogółem
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-semibold">{meta?.total ?? "—"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">w bazie</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Aktywnych
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-semibold">{meta?.total ?? "—"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">status ACTIVE</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Strona
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-semibold">
+              {page} / {meta?.totalPages ?? "?"}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">limit {PAGE_SIZE}</p>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* CTA */}
-      <div className="mb-4 flex justify-end">
-        <Link
-          to="/clients/prompt"
-          className="rounded-full bg-amber-500 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-600"
-        >
+      <div className="flex justify-end">
+        <Link to="/clients/prompt" className={buttonVariants()}>
           + Dodaj klienta (AI)
         </Link>
       </div>
@@ -368,8 +322,9 @@ export function ClientsPage() {
       />
 
       {selectedClient && (
-        <MatchesDrawer
+        <MatchesSheet
           client={selectedClient}
+          open={!!selectedClient}
           onClose={() => {
             setSelectedClient(null);
             void queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -389,24 +344,3 @@ export function ClientsPage() {
   );
 }
 
-function StatCard({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string | number;
-  sub: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-stone-200 bg-stone-50/60 px-5 py-4 dark:border-stone-700 dark:bg-stone-800/40">
-      <p className="text-xs uppercase tracking-widest text-stone-500 dark:text-stone-400">
-        {label}
-      </p>
-      <p className="mt-1 font-[Cormorant_Garamond] text-3xl font-semibold text-stone-900 dark:text-stone-100">
-        {value}
-      </p>
-      <p className="mt-0.5 text-xs text-stone-400 dark:text-stone-500">{sub}</p>
-    </div>
-  );
-}

@@ -1,6 +1,13 @@
-import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -11,7 +18,6 @@ import {
   type AuthUser,
   type CreateUserInput,
 } from "@leadfinder/contracts";
-import { cn } from "@/lib/utils";
 
 const formSchema = z
   .object({
@@ -32,18 +38,6 @@ const formSchema = z
         message: "Nazwa firmy jest wymagana dla kont firmowych.",
       });
     }
-
-    if (!value.password) {
-      return;
-    }
-
-    if (value.password.length < 8) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["password"],
-        message: "Haslo musi miec co najmniej 8 znakow.",
-      });
-    }
   });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -53,9 +47,7 @@ interface UserDialogProps {
   mode: "create" | "edit";
   initialUser?: AuthUser | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (
-    values: CreateUserInput | Omit<FormValues, "email" | "password">,
-  ) => Promise<void>;
+  onSubmit: (values: CreateUserInput | Omit<FormValues, "email" | "password">) => Promise<void>;
   isPending: boolean;
 }
 
@@ -71,16 +63,6 @@ export function UserDialog({
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      email: initialUser?.email ?? "",
-      firstName: initialUser?.firstName ?? "",
-      lastName: initialUser?.lastName ?? "",
-      password: "",
-      systemRole: initialUser?.systemRole ?? "ADMIN",
-      accountType: initialUser?.accountType ?? "PERSONAL",
-      companyName: initialUser?.companyName ?? "",
-      status: initialUser?.status ?? "ACTIVE",
-    },
     values: {
       email: initialUser?.email ?? "",
       firstName: initialUser?.firstName ?? "",
@@ -96,209 +78,163 @@ export function UserDialog({
   const accountType = form.watch("accountType");
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-stone-950/45 backdrop-blur-sm dark:bg-stone-950/70" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,720px)] -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-stone-900/10 bg-[#f8f3eb] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.22)] dark:border-stone-700/60 dark:bg-stone-900 dark:shadow-[0_30px_80px_rgba(0,0,0,0.6)]">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <Dialog.Title className="font-[Cormorant_Garamond] text-3xl font-semibold text-stone-950 dark:text-stone-100">
-                {isEdit ? "Edytuj uzytkownika" : "Dodaj uzytkownika"}
-              </Dialog.Title>
-              <Dialog.Description className="mt-2 text-sm text-stone-600 dark:text-stone-400">
-                Uzupelnij dane konta oraz poziom dostepu w panelu
-                administracyjnym.
-              </Dialog.Description>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? "Edytuj użytkownika" : "Dodaj użytkownika"}</DialogTitle>
+          <DialogDescription>
+            Uzupełnij dane konta oraz poziom dostępu w panelu administracyjnym.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="grid gap-4 py-2"
+          onSubmit={form.handleSubmit(async (values) => {
+            if (isEdit) {
+              await onSubmit({
+                firstName: values.firstName,
+                lastName: values.lastName,
+                systemRole: values.systemRole,
+                accountType: values.accountType,
+                companyName: values.accountType === "COMPANY" ? (values.companyName ?? null) : null,
+                status: values.status,
+              });
+            } else {
+              await onSubmit({
+                email: values.email,
+                firstName: values.firstName,
+                lastName: values.lastName,
+                password: values.password ?? "",
+                systemRole: values.systemRole,
+                accountType: values.accountType,
+                companyName: values.accountType === "COMPANY" ? (values.companyName ?? null) : null,
+                status: values.status,
+              });
+            }
+          })}
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="firstName">Imię</Label>
+              <Input
+                id="firstName"
+                {...form.register("firstName")}
+                aria-invalid={!!form.formState.errors.firstName}
+              />
+              {form.formState.errors.firstName && (
+                <p className="text-xs text-destructive">{form.formState.errors.firstName.message}</p>
+              )}
             </div>
-            <Dialog.Close className="rounded-full border border-stone-900/10 p-2 text-stone-600 transition hover:bg-white dark:border-stone-700 dark:text-stone-400 dark:hover:bg-stone-800">
-              <X className="h-4 w-4" />
-            </Dialog.Close>
+            <div className="grid gap-2">
+              <Label htmlFor="lastName">Nazwisko</Label>
+              <Input
+                id="lastName"
+                {...form.register("lastName")}
+                aria-invalid={!!form.formState.errors.lastName}
+              />
+              {form.formState.errors.lastName && (
+                <p className="text-xs text-destructive">{form.formState.errors.lastName.message}</p>
+              )}
+            </div>
           </div>
 
-          <form
-            className="mt-8 grid gap-4 md:grid-cols-2"
-            onSubmit={form.handleSubmit(async (values) => {
-              if (isEdit) {
-                await onSubmit({
-                  firstName: values.firstName,
-                  lastName: values.lastName,
-                  systemRole: values.systemRole,
-                  accountType: values.accountType,
-                  companyName:
-                    values.accountType === "COMPANY"
-                      ? (values.companyName ?? null)
-                      : null,
-                  status: values.status,
-                });
-              } else {
-                await onSubmit({
-                  email: values.email,
-                  firstName: values.firstName,
-                  lastName: values.lastName,
-                  password: values.password ?? "",
-                  systemRole: values.systemRole,
-                  accountType: values.accountType,
-                  companyName:
-                    values.accountType === "COMPANY"
-                      ? (values.companyName ?? null)
-                      : null,
-                  status: values.status,
-                });
-              }
-            })}
-          >
-            <Field
-              label="Email"
-              error={form.formState.errors.email?.message}
-              className="md:col-span-2"
-            >
-              <input
-                {...form.register("email")}
-                disabled={isEdit}
-                className={inputClass(
-                  form.formState.errors.email?.message,
-                  isEdit,
-                )}
-                placeholder="admin@leadfinder.local"
+          <div className="grid gap-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              {...form.register("email")}
+              disabled={isEdit}
+              aria-invalid={!!form.formState.errors.email}
+              placeholder="admin@leadfinder.local"
+            />
+            {form.formState.errors.email && (
+              <p className="text-xs text-destructive">{form.formState.errors.email.message}</p>
+            )}
+          </div>
+
+          {!isEdit && (
+            <div className="grid gap-2">
+              <Label htmlFor="password">Hasło</Label>
+              <Input
+                id="password"
+                type="password"
+                {...form.register("password")}
+                aria-invalid={!!form.formState.errors.password}
               />
-            </Field>
+              {form.formState.errors.password && (
+                <p className="text-xs text-destructive">{form.formState.errors.password.message}</p>
+              )}
+            </div>
+          )}
 
-            <Field
-              label="Imie"
-              error={form.formState.errors.firstName?.message}
-            >
-              <input
-                {...form.register("firstName")}
-                className={inputClass(form.formState.errors.firstName?.message)}
-              />
-            </Field>
-
-            <Field
-              label="Nazwisko"
-              error={form.formState.errors.lastName?.message}
-            >
-              <input
-                {...form.register("lastName")}
-                className={inputClass(form.formState.errors.lastName?.message)}
-              />
-            </Field>
-
-            {!isEdit ? (
-              <Field
-                label="Haslo"
-                error={form.formState.errors.password?.message}
-              >
-                <input
-                  type="password"
-                  {...form.register("password")}
-                  className={inputClass(
-                    form.formState.errors.password?.message,
-                  )}
-                />
-              </Field>
-            ) : null}
-
-            <Field label="Rola systemowa">
-              <select {...form.register("systemRole")} className={inputClass()}>
-                <option value="ADMIN">Administrator</option>
-                <option value="SUPER_ADMIN">Super administrator</option>
-              </select>
-            </Field>
-
-            <Field label="Typ konta">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="systemRole">Rola systemowa</Label>
               <select
+                id="systemRole"
+                {...form.register("systemRole")}
+                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="ADMIN">Administrator</option>
+                <option value="SUPER_ADMIN">Super Admin</option>
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="accountType">Typ konta</Label>
+              <select
+                id="accountType"
                 {...form.register("accountType")}
-                className={inputClass()}
+                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <option value="PERSONAL">Osobiste</option>
                 <option value="COMPANY">Firmowe</option>
               </select>
-            </Field>
-
-            <Field label="Status">
-              <select {...form.register("status")} className={inputClass()}>
-                <option value="ACTIVE">Aktywny</option>
-                <option value="INACTIVE">Nieaktywny</option>
-              </select>
-            </Field>
-
-            {accountType === "COMPANY" ? (
-              <Field
-                label="Nazwa firmy"
-                error={form.formState.errors.companyName?.message}
-                className="md:col-span-2"
-              >
-                <input
-                  {...form.register("companyName")}
-                  className={inputClass(
-                    form.formState.errors.companyName?.message,
-                  )}
-                />
-              </Field>
-            ) : null}
-
-            <div className="mt-2 flex justify-end gap-3 md:col-span-2">
-              <Dialog.Close className="rounded-full border border-stone-900/10 px-5 py-2 text-sm text-stone-700 transition hover:bg-white dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800">
-                Anuluj
-              </Dialog.Close>
-              <button
-                type="submit"
-                disabled={isPending}
-                className="rounded-full bg-stone-950 px-5 py-2 text-sm font-medium text-stone-50 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
-              >
-                {isPending
-                  ? "Zapisywanie..."
-                  : isEdit
-                    ? "Zapisz zmiany"
-                    : "Dodaj uzytkownika"}
-              </button>
             </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="status">Status</Label>
+            <select
+              id="status"
+              {...form.register("status")}
+              className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <option value="ACTIVE">Aktywny</option>
+              <option value="INACTIVE">Nieaktywny</option>
+            </select>
+          </div>
+
+          {accountType === "COMPANY" && (
+            <div className="grid gap-2">
+              <Label htmlFor="companyName">Nazwa firmy</Label>
+              <Input
+                id="companyName"
+                {...form.register("companyName")}
+                aria-invalid={!!form.formState.errors.companyName}
+              />
+              {form.formState.errors.companyName && (
+                <p className="text-xs text-destructive">{form.formState.errors.companyName.message}</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Anuluj
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {isPending ? "Zapisywanie..." : isEdit ? "Zapisz zmiany" : "Dodaj użytkownika"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function Field({
-  label,
-  error,
-  className,
-  children,
-}: {
-  label: string;
-  error?: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <label
-      className={cn(
-        "grid gap-2 text-sm text-stone-700 dark:text-stone-300",
-        className,
-      )}
-    >
-      <span className="font-medium uppercase tracking-[0.2em] text-stone-500 dark:text-stone-400">
-        {label}
-      </span>
-      {children}
-      {error ? (
-        <span className="text-xs text-rose-600 dark:text-rose-400">
-          {error}
-        </span>
-      ) : null}
-    </label>
-  );
-}
 
-function inputClass(error?: string, disabled?: boolean) {
-  return cn(
-    "min-h-12 rounded-2xl border px-4 text-sm outline-none transition dark:text-stone-100",
-    error
-      ? "border-rose-500 bg-rose-50 dark:border-rose-700 dark:bg-rose-950/30"
-      : "border-stone-900/10 bg-white dark:border-stone-700 dark:bg-stone-800",
-    disabled
-      ? "cursor-not-allowed bg-stone-100 text-stone-500 dark:bg-stone-700 dark:text-stone-500"
-      : "focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:focus:border-amber-600 dark:focus:ring-amber-900/50",
-  );
-}

@@ -1,9 +1,12 @@
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import { pl } from "date-fns/locale";
-import { motion } from "framer-motion";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   DataTable,
@@ -25,10 +28,6 @@ import { AnnouncementAiSearchDialog } from "@/components/AnnouncementAiSearchDia
 
 const PAGE_SIZE = 20;
 
-// ---------------------------------------------------------------------------
-// Filter config
-// ---------------------------------------------------------------------------
-
 const SOURCE_OPTIONS: { value: AnnouncementSource | "ALL"; label: string }[] = [
   { value: "ALL", label: "Wszystkie źródła" },
   { value: "BAZA_KONKURENCYJNOSCI", label: "Baza Konk." },
@@ -44,64 +43,11 @@ const STATUS_OPTIONS: { value: AnnouncementStatus | "ALL"; label: string }[] = [
   { value: "UNKNOWN", label: "Nieznany" },
 ];
 
-const STATUS_BADGE_CLASS: Record<AnnouncementStatus, string> = {
-  OPEN: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-300",
-  CLOSED: "bg-stone-100 text-stone-700 dark:bg-stone-700 dark:text-stone-300",
-  AWARDED: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-300",
-  UNKNOWN: "bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400",
-};
-
-// ---------------------------------------------------------------------------
-// Helper components
-// ---------------------------------------------------------------------------
-
-function Tag({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em]",
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
+function statusVariant(status: AnnouncementStatus): "default" | "secondary" | "outline" | "destructive" {
+  if (status === "OPEN") return "default";
+  if (status === "AWARDED") return "secondary";
+  return "outline";
 }
-
-function FilterButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "rounded-full border px-3 py-1.5 text-xs transition",
-        active
-          ? "border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-600 dark:bg-amber-950/60 dark:text-amber-300"
-          : "border-stone-200 text-stone-500 hover:border-stone-400 hover:text-stone-700 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-200",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 function ScraperPanel() {
   const queryClient = useQueryClient();
@@ -127,49 +73,58 @@ function ScraperPanel() {
   const isActive = (counts?.active ?? 0) > 0 || (counts?.waiting ?? 0) > 0;
 
   return (
-    <div className="rounded-[2rem] border border-stone-900/10 bg-[#fcfaf6] p-5 dark:border-stone-700/60 dark:bg-stone-800/60">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className={cn(
-            "h-2.5 w-2.5 rounded-full",
-            isActive ? "animate-pulse bg-amber-500" : "bg-emerald-500",
-          )} />
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-stone-500 dark:text-stone-400">Scraper BK</p>
-            <p className="text-sm font-medium text-stone-800 dark:text-stone-200">
-              {isActive ? "Aktywny" : "Gotowy"}
-              {counts && (
-                <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">
-                  aktywne: {counts.active} · oczekujące: {counts.waiting} · ukończone: {counts.completed} · błędy: {counts.failed}
-                </span>
+    <Card>
+      <CardContent className="py-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span
+              className={cn(
+                "inline-block size-2.5 rounded-full",
+                isActive ? "animate-pulse bg-yellow-500" : "bg-green-500",
               )}
-            </p>
+            />
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">Scraper BK</p>
+              <p className="text-sm font-medium">
+                {isActive ? "Aktywny" : "Gotowy"}
+                {counts && (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    aktywne: {counts.active} · oczekujące: {counts.waiting} · ukończone:{" "}
+                    {counts.completed} · błędy: {counts.failed}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {lastRun?.finishedAt && (
+              <p className="text-xs text-muted-foreground">
+                Ostatni run:{" "}
+                <span className="text-foreground">
+                  {formatDistanceToNow(new Date(lastRun.finishedAt), {
+                    addSuffix: true,
+                    locale: pl,
+                  })}
+                </span>
+                {lastFailed?.failedReason && (
+                  <span className="ml-2 text-destructive">
+                    ⚠ {lastFailed.failedReason.slice(0, 60)}
+                  </span>
+                )}
+              </p>
+            )}
+            <Button
+              size="sm"
+              onClick={() => triggerMutation.mutate()}
+              disabled={triggerMutation.isPending || isActive}
+            >
+              {triggerMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom scraper"}
+            </Button>
           </div>
         </div>
-
-        <div className="flex items-center gap-3">
-          {lastRun?.finishedAt && (
-            <p className="text-xs text-stone-400 dark:text-stone-500">
-              Ostatni run:{" "}
-              <span className="text-stone-600 dark:text-stone-300">
-                {formatDistanceToNow(new Date(lastRun.finishedAt), { addSuffix: true, locale: pl })}
-              </span>
-              {lastFailed?.failedReason && (
-                <span className="ml-2 text-red-500">⚠ ostatni błąd: {lastFailed.failedReason.slice(0, 60)}</span>
-              )}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => triggerMutation.mutate()}
-            disabled={triggerMutation.isPending || isActive}
-            className="rounded-full bg-stone-950 px-5 py-2 text-xs font-medium uppercase tracking-[0.2em] text-stone-100 transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300"
-          >
-            {triggerMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom scraper"}
-          </button>
-        </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -182,14 +137,7 @@ export function AnnouncementsPage() {
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
 
   const query = useQuery({
-    queryKey: [
-      "announcements",
-      search,
-      page,
-      PAGE_SIZE,
-      sourceFilter,
-      statusFilter,
-    ],
+    queryKey: ["announcements", search, page, PAGE_SIZE, sourceFilter, statusFilter],
     queryFn: () =>
       fetchAnnouncements({
         search,
@@ -211,11 +159,9 @@ export function AnnouncementsPage() {
         accessorFn: (a) => a,
         cell: ({ row }) => (
           <div className="max-w-[420px]">
-            <div className="line-clamp-2 font-medium text-stone-950 dark:text-stone-100">
-              {row.title}
-            </div>
+            <div className="line-clamp-2 font-medium">{row.title}</div>
             {row.description && (
-              <div className="mt-1 line-clamp-1 text-xs text-stone-500">
+              <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                 {row.description}
               </div>
             )}
@@ -227,9 +173,7 @@ export function AnnouncementsPage() {
         header: "Źródło",
         accessorFn: (a) => a.sourceSystem,
         cell: ({ row }) => (
-          <Tag className="bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-            {SOURCE_LABELS[row.sourceSystem]}
-          </Tag>
+          <Badge variant="secondary">{SOURCE_LABELS[row.sourceSystem]}</Badge>
         ),
       },
       {
@@ -237,9 +181,7 @@ export function AnnouncementsPage() {
         header: "Status",
         accessorFn: (a) => a.status,
         cell: ({ row }) => (
-          <Tag className={STATUS_BADGE_CLASS[row.status]}>
-            {STATUS_LABELS[row.status]}
-          </Tag>
+          <Badge variant={statusVariant(row.status)}>{STATUS_LABELS[row.status]}</Badge>
         ),
       },
       {
@@ -251,15 +193,13 @@ export function AnnouncementsPage() {
             <span
               className={cn(
                 "text-sm",
-                new Date(row.deadlineAt) < new Date()
-                  ? "text-stone-400"
-                  : "text-stone-800 dark:text-stone-200",
+                new Date(row.deadlineAt) < new Date() ? "text-muted-foreground" : "",
               )}
             >
               {format(new Date(row.deadlineAt), "dd.MM.yyyy")}
             </span>
           ) : (
-            <span className="text-stone-400">—</span>
+            <span className="text-muted-foreground">—</span>
           ),
       },
       {
@@ -267,7 +207,8 @@ export function AnnouncementsPage() {
         header: "Wartość",
         accessorFn: (a) => a.valueMin,
         cell: ({ row }) => {
-          if (!row.valueMin && !row.valueMax) return <span className="text-stone-400">—</span>;
+          if (!row.valueMin && !row.valueMax)
+            return <span className="text-muted-foreground">—</span>;
           const fmt = (v: string) =>
             Number(v).toLocaleString("pl-PL", {
               style: "currency",
@@ -276,16 +217,12 @@ export function AnnouncementsPage() {
             });
           if (row.valueMin && row.valueMax && row.valueMin !== row.valueMax) {
             return (
-              <span className="text-sm text-stone-700 dark:text-stone-300">
+              <span className="text-sm">
                 {fmt(row.valueMin)} – {fmt(row.valueMax)}
               </span>
             );
           }
-          return (
-            <span className="text-sm text-stone-700 dark:text-stone-300">
-              {fmt((row.valueMin ?? row.valueMax)!)}
-            </span>
-          );
+          return <span className="text-sm">{fmt((row.valueMin ?? row.valueMax)!)}</span>;
         },
       },
       {
@@ -315,80 +252,58 @@ export function AnnouncementsPage() {
 
   return (
     <div className="grid gap-6">
-      {/* Header card */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
-        className="rounded-[2rem] border border-stone-900/10 bg-[#fcfaf6] p-6 dark:border-stone-700/60 dark:bg-stone-800/60"
-      >
-        <p className="text-xs uppercase tracking-[0.35em] text-stone-500 dark:text-stone-400">
-          Ogłoszenia
-        </p>
-        <h3 className="mt-4 max-w-2xl font-[Cormorant_Garamond] text-4xl font-semibold text-stone-950 dark:text-stone-100">
-          Zapytania ofertowe pobrane z zewnętrznych portali.
-        </h3>
-        <p className="mt-4 max-w-2xl text-sm leading-7 text-stone-600 dark:text-stone-400">
-          Przeglądaj i filtruj ogłoszenia ze wszystkich skonfigurowanych źródeł.
-          Kliknij na wiersz, aby zobaczyć pełne dane z parsera.
-        </p>
-        {meta && (
-          <p className="mt-3 text-xs text-stone-400">
-            Łącznie w bazie:{" "}
-            <span className="font-semibold text-stone-600 dark:text-stone-300">
-              {meta.total.toLocaleString("pl-PL")}
-            </span>{" "}
-            ogłoszeń
-          </p>
-        )}
-        <div className="mt-5">
-          <button
-            type="button"
-            onClick={() => setAiDialogOpen(true)}
-            className="rounded-full border border-stone-950/15 bg-white/80 px-4 py-2 text-xs uppercase tracking-[0.2em] text-stone-700 transition hover:border-amber-500 hover:text-amber-700 dark:border-stone-600 dark:bg-stone-800/50 dark:text-stone-200 dark:hover:border-amber-500 dark:hover:text-amber-400"
-          >
-            AI Match Lab
-          </button>
-        </div>
-      </motion.div>
-
-      {/* Scraper control */}
       <ScraperPanel />
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5">
           {SOURCE_OPTIONS.map((opt) => (
-            <FilterButton
+            <Button
               key={opt.value}
-              active={sourceFilter === opt.value}
+              variant={sourceFilter === opt.value ? "default" : "outline"}
+              size="xs"
               onClick={() => {
                 setSourceFilter(opt.value);
                 setPage(1);
               }}
             >
               {opt.label}
-            </FilterButton>
+            </Button>
           ))}
         </div>
-        <div className="h-auto w-px bg-stone-200 dark:bg-stone-700 self-stretch hidden sm:block" />
+        <Separator orientation="vertical" className="hidden h-6 sm:block" />
         <div className="flex flex-wrap gap-1.5">
           {STATUS_OPTIONS.map((opt) => (
-            <FilterButton
+            <Button
               key={opt.value}
-              active={statusFilter === opt.value}
+              variant={statusFilter === opt.value ? "default" : "outline"}
+              size="xs"
               onClick={() => {
                 setStatusFilter(opt.value);
                 setPage(1);
               }}
             >
               {opt.label}
-            </FilterButton>
+            </Button>
           ))}
+        </div>
+        <div className="ml-auto">
+          <Button variant="outline" size="sm" onClick={() => setAiDialogOpen(true)}>
+            AI Match Lab
+          </Button>
         </div>
       </div>
 
-      {/* Table */}
+      {meta && (
+        <p className="text-sm text-muted-foreground">
+          Łącznie w bazie:{" "}
+          <span className="font-semibold text-foreground">
+            {meta.total.toLocaleString("pl-PL")}
+          </span>{" "}
+          ogłoszeń
+        </p>
+      )}
+
       <DataTable
         data={announcements}
         columns={columns}
@@ -415,7 +330,6 @@ export function AnnouncementsPage() {
         }}
       />
 
-      {/* JSON preview dialog */}
       <RawDataDialog
         announcement={selected}
         open={!!selected}
@@ -428,3 +342,4 @@ export function AnnouncementsPage() {
     </div>
   );
 }
+
