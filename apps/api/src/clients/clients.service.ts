@@ -129,6 +129,7 @@ export class ClientsService {
           title: m.announcementItem.title,
           description: m.announcementItem.description,
           price: m.announcementItem.price?.toString() ?? null,
+          kind: m.announcementItem.kind ?? null,
           announcement: {
             id: m.announcementItem.announcement.id,
             title: m.announcementItem.announcement.title,

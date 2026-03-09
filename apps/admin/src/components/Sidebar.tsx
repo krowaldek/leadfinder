@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { Link, useLocation } from "@tanstack/react-router";
-import { LogOut, ShieldCheck, Users, FileText, Building2 } from "lucide-react";
+import { LogOut, ShieldCheck, Users, FileText, Building2, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -10,6 +10,7 @@ const navItems = [
   { to: "/users", label: "Użytkownicy", icon: Users },
   { to: "/announcements", label: "Ogłoszenia", icon: FileText },
   { to: "/clients", label: "Klienci", icon: Building2 },
+  { to: "/clients/matches", label: "Zapytania klientów", icon: ListChecks },
 ];
 
 interface SidebarContentProps {

@@ -11,6 +11,7 @@ import { UsersPage } from "@/features/users/UsersPage";
 import { AnnouncementsPage } from "@/features/announcements/AnnouncementsPage";
 import { ClientsPage } from "@/features/clients/ClientsPage";
 import { ClientPromptPage } from "@/features/clients/ClientPromptPage";
+import { ClientMatchesPage } from "@/features/clients/ClientMatchesPage";
 import { getAuthSnapshot } from "@/stores/auth-store";
 
 function requireAuth() {
@@ -76,9 +77,15 @@ const clientPromptRoute = createRoute({
   component: ClientPromptPage,
 });
 
+const clientMatchesRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/clients/matches",
+  component: ClientMatchesPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appLayoutRoute.addChildren([homeRoute, usersRoute, announcementsRoute, clientsRoute, clientPromptRoute]),
+  appLayoutRoute.addChildren([homeRoute, usersRoute, announcementsRoute, clientsRoute, clientPromptRoute, clientMatchesRoute]),
 ]);
 
 export const router = createRouter({

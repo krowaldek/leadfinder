@@ -13,6 +13,7 @@ const PAGE_META: Record<string, { title: string; badge: string }> = {
   "/announcements": { title: "Ogłoszenia", badge: "Scraper" },
   "/clients": { title: "Klienci", badge: "CRM" },
   "/clients/prompt": { title: "Nowy klient", badge: "AI" },
+  "/clients/matches": { title: "Zapytania klientów", badge: "CRM" },
 };
 
 export function AppShell() {

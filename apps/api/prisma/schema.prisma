@@ -118,6 +118,17 @@ enum AnnouncementItemStatus {
   ERROR
 }
 
+enum AnnouncementKind {
+  DOSTAWA
+  USLUGA
+  ROBOTY_BUDOWLANE
+  SZKOLENIE
+  USLUGA_IT
+  USLUGA_BADAWCZO_ROZWOJOWA
+  DORADZTWO
+  INNE
+}
+
 model AnnouncementItem {
   id             String                 @id @default(uuid()) @db.Uuid
   announcementId String                 @db.Uuid
@@ -127,6 +138,7 @@ model AnnouncementItem {
   searchContext  String                 @db.Text
   embedding      Unsupported("vector(1536)")?
   price          Decimal?               @db.Decimal(15, 2)
+  kind           AnnouncementKind?
   status         AnnouncementItemStatus @default(PENDING)
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
