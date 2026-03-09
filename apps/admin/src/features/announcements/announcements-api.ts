@@ -45,6 +45,16 @@ export async function triggerScraper() {
   return response.data as { jobId: string; status: string };
 }
 
+export async function backfillDeadlines() {
+  const response = await api.post("/scrapers/bk/backfill-deadlines");
+  return response.data as { updated: number };
+}
+
+export async function backfillKind() {
+  const response = await api.post("/scrapers/embedding/backfill-kind");
+  return response.data as { queued: number; status: string };
+}
+
 export interface QueueStatus {
   counts: { waiting: number; active: number; completed: number; failed: number; delayed: number };
   schedule: { name: string; cron: string; next: number }[];

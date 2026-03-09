@@ -9,6 +9,7 @@ import {
   mapBkDetailToUpsertData,
   type BkSearchResponse,
   type BkDetailResponse,
+  type BkListItem,
 } from "./bk.mapper.js";
 import type { AppEnv } from "../../config/env.js";
 
@@ -42,10 +43,10 @@ export class BkScraperService {
   // Step 1 – discover IDs not yet in the database
   // ---------------------------------------------------------------------------
 
-  async discoverNewIds(): Promise<string[]> {
+  async discoverNewIds(): Promise<{ newIds: string[]; listItems: BkListItem[] }> {
     if (!this.apiBaseUrl) {
       this.logger.warn("BK scraper is disabled: missing BK_API_BASE_URL.");
-      return [];
+      return { newIds: [], listItems: [] };
     }
 
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -62,7 +63,7 @@ export class BkScraperService {
 
     if (items.length === 0) {
       this.logger.log("BK list returned 0 items");
-      return [];
+      return { newIds: [], listItems: [] };
     }
 
     const fetchedIds = items.map((item) => String(item.id));
@@ -82,7 +83,7 @@ export class BkScraperService {
       `BK: ${fetchedIds.length} fetched, ${existingIds.size} already in DB, ${newIds.length} new`,
     );
 
-    return newIds;
+    return { newIds, listItems: items };
   }
 
   // ---------------------------------------------------------------------------
@@ -168,14 +169,19 @@ export class BkScraperService {
     this.logger.log("BK scraper run started");
 
     let newIds: string[];
+    let listItems: BkListItem[];
 
     try {
-      newIds = await this.discoverNewIds();
+      ({ newIds, listItems } = await this.discoverNewIds());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`BK: discoverNewIds failed – ${message}`);
       return;
     }
+
+    // Backfill deadlineAt for existing announcements that appeared in the list
+    // but were saved before the deadline field was properly populated.
+    await this.backfillDeadlines(listItems);
 
     if (newIds.length === 0) {
       this.logger.log("BK: nothing new, updating metadata");
@@ -198,6 +204,60 @@ export class BkScraperService {
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Aktualizuje deadlineAt dla ogłoszeń które pojawiły się w liście BK
+   * ale mają null w polu deadlineAt (stare rekordy sprzed poprawki mappera).
+   */
+  private async backfillDeadlines(listItems: BkListItem[]): Promise<void> {
+    const itemsWithDeadline = listItems.filter(
+      (item) => item.submission_deadline,
+    );
+
+    if (itemsWithDeadline.length === 0) return;
+
+    const updates = itemsWithDeadline.map((item) => ({
+      externalId: String(item.id),
+      deadlineAt: new Date(item.submission_deadline!),
+    }));
+
+    // Tylko aktualizuj rekordy które mają deadlineAt = null
+    const toUpdate = await this.prisma.announcement.findMany({
+      where: {
+        sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
+        externalId: { in: updates.map((u) => u.externalId) },
+        deadlineAt: null,
+      },
+      select: { externalId: true },
+    });
+
+    if (toUpdate.length === 0) {
+      this.logger.log("BK backfillDeadlines: no announcements need deadline update");
+      return;
+    }
+
+    const toUpdateSet = new Set(toUpdate.map((a) => a.externalId));
+
+    await Promise.all(
+      updates
+        .filter((u) => toUpdateSet.has(u.externalId))
+        .map((u) =>
+          this.prisma.announcement.update({
+            where: {
+              sourceSystem_externalId: {
+                sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
+                externalId: u.externalId,
+              },
+            },
+            data: { deadlineAt: u.deadlineAt },
+          }),
+        ),
+    );
+
+    this.logger.log(
+      `BK backfillDeadlines: updated ${toUpdate.length} announcement deadlines`,
+    );
+  }
 
   private async updateMetadata(lastItemId?: string): Promise<void> {
     await this.prisma.scraperMetadata.upsert({

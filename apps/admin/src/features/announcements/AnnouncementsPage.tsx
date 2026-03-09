@@ -18,7 +18,7 @@ import {
   type AnnouncementSource,
   type AnnouncementStatus,
 } from "@leadfinder/contracts";
-import { fetchAnnouncements, triggerScraper, fetchQueueStatus } from "./announcements-api";
+import { fetchAnnouncements, triggerScraper, fetchQueueStatus, backfillDeadlines, backfillKind } from "./announcements-api";
 import {
   RawDataDialog,
   SOURCE_LABELS,
@@ -65,6 +65,18 @@ function ScraperPanel() {
       void queryClient.invalidateQueries({ queryKey: ["scraper-queue-status"] });
     },
     onError: () => toast.error("Nie udało się uruchomić scrapera"),
+  });
+
+  const backfillDeadlinesMutation = useMutation({
+    mutationFn: backfillDeadlines,
+    onSuccess: (data) => toast.success(`Uzupełniono ${data.updated} terminów składania`),
+    onError: () => toast.error("Nie udało się uzupełnić terminów"),
+  });
+
+  const backfillKindMutation = useMutation({
+    mutationFn: backfillKind,
+    onSuccess: (data) => toast.success(`Zakolejkowano ${data.queued} embedingów do klasyfikacji`),
+    onError: () => toast.error("Nie udało się uruchomić backfill rodzaju"),
   });
 
   const counts = statusQuery.data?.counts;
@@ -114,6 +126,24 @@ function ScraperPanel() {
                 )}
               </p>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => backfillDeadlinesMutation.mutate()}
+              disabled={backfillDeadlinesMutation.isPending}
+              title="Uzupełnij terminy składania z zapisanych danych (rawData)"
+            >
+              {backfillDeadlinesMutation.isPending ? "Trwa…" : "Backfill terminów"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => backfillKindMutation.mutate()}
+              disabled={backfillKindMutation.isPending}
+              title="Sklasyfikuj rodzaj dla ogłoszeń bez klasyfikacji"
+            >
+              {backfillKindMutation.isPending ? "Trwa…" : "Backfill rodzaju"}
+            </Button>
             <Button
               size="sm"
               onClick={() => triggerMutation.mutate()}

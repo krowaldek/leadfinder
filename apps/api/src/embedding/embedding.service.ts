@@ -7,8 +7,11 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { OpenAIEmbeddings, ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
+import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
 
 // ── Klasyfikacja rodzaju ogłoszenia ─────────────────────────────────────────
 
@@ -61,6 +64,8 @@ export class EmbeddingService {
     private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService<AppEnv>,
+    @InjectQueue(EMBEDDING_QUEUE)
+    private readonly embeddingQueue: Queue,
   ) {}
 
   /**
@@ -150,7 +155,47 @@ export class EmbeddingService {
   // ── Prywatne ────────────────────────────────────────────────────────────────
 
   /**
-   * Klasyfikuje rodzaj ogłoszenia przez LLM.
+   * Backfill: resetuje itemy z null kind do PENDING i kolejkuje je ponownie.
+   * Zwraca liczbę zakolejkowanych itemów.
+   */
+  async backfillKind(): Promise<number> {
+    const items = await this.prisma.announcementItem.findMany({
+      where: { kind: null },
+      select: { id: true },
+    });
+
+    if (items.length === 0) {
+      this.logger.log("backfillKind: no items with null kind");
+      return 0;
+    }
+
+    this.logger.log(`backfillKind: resetting ${items.length} items to PENDING`);
+
+    await this.prisma.announcementItem.updateMany({
+      where: { id: { in: items.map((i) => i.id) } },
+      data: { status: "PENDING" },
+    });
+
+    for (const item of items) {
+      await this.embeddingQueue.add(
+        EmbeddingJob.EMBED_ITEM,
+        { itemId: item.id },
+        {
+          attempts: 3,
+          backoff: { type: "exponential", delay: 5_000 },
+          removeOnComplete: { count: 100 },
+          removeOnFail: { count: 50 },
+        },
+      );
+    }
+
+    this.logger.log(`backfillKind: queued ${items.length} embedding jobs`);
+    return items.length;
+  }
+
+  // ── Prywatne (klasyfikacja) ──────────────────────────────────────────────────
+
+  /**
    * Używa taniego modelu (gpt-4o-mini) z zerową temperaturą — deterministyczna odpowiedź.
    * Fallback: INNE przy nieoczekiwanej odpowiedzi modelu.
    */

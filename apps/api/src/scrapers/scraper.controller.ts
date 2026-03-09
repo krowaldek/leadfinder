@@ -17,6 +17,8 @@ import { Roles } from "../common/roles.decorator.js";
 import { SystemRole } from "@prisma/client";
 import { SCRAPER_QUEUE, ScraperJob } from "./scraper-queue.constants.js";
 import { ScraperScheduleService } from "./scraper-queue.module.js";
+import { EmbeddingService } from "../embedding/embedding.service.js";
+import { PrismaService } from "../database/prisma.service.js";
 import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
 
@@ -39,6 +41,10 @@ export class ScraperController {
     private readonly queue: Queue,
     @Inject(ScraperScheduleService)
     private readonly scheduleService: ScraperScheduleService,
+    @Inject(EmbeddingService)
+    private readonly embeddingService: EmbeddingService,
+    @Inject(PrismaService)
+    private readonly prisma: PrismaService,
   ) {}
 
   /** Manually trigger a BK scraper run */
@@ -103,6 +109,34 @@ export class ScraperController {
   ) {
     const cron = await this.scheduleService.registerSchedules(body.cron);
     return { cron, status: "scheduled" };
+  }
+
+  /**
+   * Backfill: ustaw kind dla wszystkich AnnouncementItem bez klasyfikacji.
+   * Resetuje status na PENDING i kolejkuje ponowne embedding z klasyfikacją.
+   */
+  @Post("embedding/backfill-kind")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async backfillKind() {
+    const queued = await this.embeddingService.backfillKind();
+    return { queued, status: "queued" };
+  }
+
+  /**
+   * Backfill: uzupełnij deadlineAt dla ogłoszeń BK z brakującym terminem.
+   * Czyta submission_deadline z pola rawData (JSON) przechowywanego w DB.
+   */
+  @Post("bk/backfill-deadlines")
+  @HttpCode(HttpStatus.OK)
+  async backfillDeadlines() {
+    const result = await this.prisma.$executeRaw`
+      UPDATE announcements
+      SET "deadlineAt" = ("rawData"->>'submission_deadline')::timestamptz
+      WHERE "deadlineAt" IS NULL
+        AND "rawData"->>'submission_deadline' IS NOT NULL
+        AND "sourceSystem" = 'BAZA_KONKURENCYJNOSCI'
+    `;
+    return { updated: result };
   }
 }
 
