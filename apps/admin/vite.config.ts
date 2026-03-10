@@ -11,6 +11,11 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    // Workspace packages should not be pre-bundled so Vite always picks
+    // up the freshly built dist/ files without needing a cache bust.
+    exclude: ["@leadfinder/contracts"],
+  },
   test: {
     environment: "jsdom",
     globals: true,
