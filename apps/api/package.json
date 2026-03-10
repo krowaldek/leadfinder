@@ -21,6 +21,7 @@
     "normalization:backfill": "node --import tsx src/normalization/backfill.ts"
   },
   "dependencies": {
+    "@google/genai": "^1.44.0",
     "@langchain/core": "^1.1.31",
     "@langchain/openai": "^1.2.12",
     "@leadfinder/contracts": "workspace:*",

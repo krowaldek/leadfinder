@@ -116,6 +116,12 @@ export interface RankedAttachment {
   contentType?: string;
 }
 
+export interface DirectPdfEmbeddingAttachment {
+  name: string;
+  buffer: Buffer;
+  pageCount: number;
+}
+
 export interface AttachmentExtractionOptions {
   maxAttachments: number;
   maxCharsPerFile: number;
@@ -204,6 +210,54 @@ export async function extractAttachmentTexts(
   }
 
   return extractedTexts;
+}
+
+export async function fetchDirectPdfEmbeddingAttachments(
+  attachments: RankedAttachment[],
+  options: {
+    maxAttachments: number;
+    maxPages: number;
+    timeoutMs?: number;
+  },
+  logger: Logger,
+): Promise<DirectPdfEmbeddingAttachment[]> {
+  const pdfAttachments = attachments.filter((attachment) => attachment.ext === "pdf");
+  const directAttachments: DirectPdfEmbeddingAttachment[] = [];
+
+  for (const attachment of pdfAttachments) {
+    if (directAttachments.length >= options.maxAttachments) break;
+
+    try {
+      const response = await axios.get<ArrayBuffer>(attachment.url, {
+        responseType: "arraybuffer",
+        timeout: options.timeoutMs ?? 30_000,
+        maxContentLength: 20 * 1024 * 1024,
+      });
+
+      const buffer = Buffer.from(response.data);
+      const parsed = await pdfParse(buffer);
+      const pageCount = parsed.numpages ?? 0;
+
+      if (pageCount === 0 || pageCount > options.maxPages) {
+        logger.debug(
+          `Skipping direct PDF embedding for ${attachment.name} (pages=${pageCount}, max=${options.maxPages})`,
+        );
+        continue;
+      }
+
+      directAttachments.push({
+        name: attachment.name,
+        buffer,
+        pageCount,
+      });
+    } catch (error) {
+      logger.warn(
+        `Direct PDF embedding fetch failed (${attachment.name}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return directAttachments;
 }
 
 function normalizeAttachment(
@@ -297,6 +351,7 @@ async function getAttachmentText(
   cache?: AttachmentCacheAdapter,
 ): Promise<string | null> {
   const cached = cache ? await cache.get(attachment.cacheKey) : null;
+
   if (cached) {
     if (cached.status === "SUCCESS" && cached.extractedText) {
       logger.debug(`Attachment cache hit: ${attachment.name} (${cached.extractionMethod ?? "unknown"})`);

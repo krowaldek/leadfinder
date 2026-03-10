@@ -8,6 +8,7 @@ import { SCRAPER_QUEUE } from "./scraper-queue.constants.js";
 import { NormalizationModule } from "../normalization/normalization.module.js";
 import { EmbeddingModule } from "../embedding/embedding.module.js";
 import { DatabaseModule } from "../database/database.module.js";
+import { LogsModule } from "../logs/logs.module.js";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { DatabaseModule } from "../database/database.module.js";
     NormalizationModule,
     EmbeddingModule,
     DatabaseModule,
+    LogsModule,
   ],
   providers: [BkScraperService, ScraperProcessor],
   controllers: [ScraperController],

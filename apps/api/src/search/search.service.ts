@@ -1,9 +1,10 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+import { ChatOpenAI } from "@langchain/openai";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
 import type { SearchMode, SearchResultItem } from "@leadfinder/contracts";
+import { AppEmbeddings, hasValidEmbeddingConfig } from "../common/embeddings.js";
 
 interface RawSearchRow {
   id: string;
@@ -152,18 +153,18 @@ export class SearchService {
     threshold: number,
     candidateLimit: number,
   ): Promise<SearchCandidate[]> {
-    const canUseEmbeddings = this.hasValidOpenAiKey();
+    const canUseEmbeddings = hasValidEmbeddingConfig(this.config);
 
     if (!canUseEmbeddings) {
       this.logger.warn(
-        "OPENAI_API_KEY not configured or is a placeholder — falling back to keyword-only search.",
+        "Embedding provider is not configured — falling back to keyword-only search.",
       );
       const keywordRows = await this.runKeywordSearch(effectiveQuery, candidateLimit);
       const merged = this.mergeCandidateRows([], keywordRows);
       return merged.map((candidate) => ({
         ...candidate,
         score: candidate.keyword ?? 0,
-        explanations: ["Wyszukiwanie pełnotekstowe (brak klucza OpenAI — tryb awaryjny)."],
+        explanations: ["Wyszukiwanie pełnotekstowe (brak skonfigurowanego providera embeddings — tryb awaryjny)."],
       }));
     }
 
@@ -845,20 +846,16 @@ export class SearchService {
 
   private async embedQuery(query: string): Promise<string> {
     const embedder = this.getEmbedder();
-    const [vector] = await embedder.embedDocuments([query]);
+    const vector = await embedder.embedQuery(query);
     return `[${vector.join(",")}]`;
   }
 
-  private getEmbedder(): OpenAIEmbeddings {
-    const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is not set — cannot perform AI search");
+  private getEmbedder(): AppEmbeddings {
+    if (!hasValidEmbeddingConfig(this.config)) {
+      throw new Error("Embedding provider is not configured — cannot perform vector search");
     }
 
-    const model =
-      this.config.get<string>("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small";
-
-    return new OpenAIEmbeddings({ apiKey, model });
+    return new AppEmbeddings(this.config);
   }
 
   private getChatModel(): ChatOpenAI {

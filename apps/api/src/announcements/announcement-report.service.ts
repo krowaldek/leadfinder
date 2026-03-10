@@ -10,6 +10,7 @@ import {
   type AttachmentCacheAdapter,
   type RawAttachmentLike,
 } from "../common/attachment-text.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 
 const MAX_CHARS_PER_FILE = 7_000;
 const MAX_TOTAL_ATTACHMENT_CHARS = 24_000;
@@ -57,6 +58,8 @@ export class AnnouncementReportService {
     private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService<AppEnv>,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {}
 
   /**
@@ -65,6 +68,24 @@ export class AnnouncementReportService {
    * Wynik zapisuje w announcement.detailedReport i zwraca jako string.
    */
   async generateReport(announcementId: string): Promise<string> {
+    const logId = await this.jobLogger.start({
+      type: "REPORT",
+      jobName: "GENERATE_REPORT",
+      entityId: announcementId,
+      payload: { announcementId },
+    });
+
+    try {
+      const result = await this._doGenerateReport(announcementId, logId);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+      throw err;
+    }
+  }
+
+  private async _doGenerateReport(announcementId: string, logId: string): Promise<string> {
     const announcement = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
       select: {
@@ -169,6 +190,19 @@ export class AnnouncementReportService {
     });
 
     this.logger.log(`Report generated for announcement ${announcementId} (${report.length} chars)`);
+
+    await this.jobLogger.finish({
+      logId,
+      status: "COMPLETED",
+      result: {
+        announcementId,
+        title: announcement.title,
+        reportLength: report.length,
+        attachmentsProcessed: attachmentTexts.length,
+        itemsCount: announcement.items.length,
+      },
+    });
+
     return report;
   }
 

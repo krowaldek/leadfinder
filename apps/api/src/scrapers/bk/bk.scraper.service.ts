@@ -173,12 +173,12 @@ export class BkScraperService {
   // Orchestrator – run full sync cycle
   // ---------------------------------------------------------------------------
 
-  async run(): Promise<void> {
+  async run(): Promise<{ discovered: number; saved: number; failed: number; skipped: boolean }> {
     if (!this.apiBaseUrl) {
       this.logger.warn(
         "Skipping BK scraper run because BK_API_BASE_URL is not configured.",
       );
-      return;
+      return { discovered: 0, saved: 0, failed: 0, skipped: true };
     }
 
     this.logger.log("BK scraper run started");
@@ -191,7 +191,7 @@ export class BkScraperService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`BK: discoverNewIds failed – ${message}`);
-      return;
+      throw err;
     }
 
     // Backfill deadlineAt for existing announcements that appeared in the list
@@ -201,7 +201,7 @@ export class BkScraperService {
     if (newIds.length === 0) {
       this.logger.log("BK: nothing new, updating metadata");
       await this.updateMetadata();
-      return;
+      return { discovered: 0, saved: 0, failed: 0, skipped: false };
     }
 
     // Zbuduj mapę id → content z danych listy (opis ogłoszenia dostępny tylko w liście, nie w detalu)
@@ -219,11 +219,13 @@ export class BkScraperService {
     const results = await Promise.allSettled(tasks);
 
     const failed = results.filter((r) => r.status === "rejected").length;
+    const saved = results.length - failed;
     this.logger.log(
-      `BK: run complete – ${results.length - failed} saved, ${failed} failed`,
+      `BK: run complete – ${saved} saved, ${failed} failed`,
     );
 
     await this.updateMetadata(newIds[0]);
+    return { discovered: newIds.length, saved, failed, skipped: false };
   }
 
   // ---------------------------------------------------------------------------

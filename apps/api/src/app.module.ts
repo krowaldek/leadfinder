@@ -14,6 +14,7 @@ import { NormalizationModule } from "./normalization/normalization.module.js";
 import { EmbeddingModule } from "./embedding/embedding.module.js";
 import { SearchModule } from "./search/search.module.js";
 import { ClientsModule } from "./clients/clients.module.js";
+import { LogsModule } from "./logs/logs.module.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const envFilePaths = [
@@ -41,6 +42,7 @@ const envFilePaths = [
     EmbeddingModule,
     SearchModule,
     ClientsModule,
+    LogsModule,
   ],
 })
 export class AppModule {}

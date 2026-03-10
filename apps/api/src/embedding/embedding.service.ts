@@ -5,13 +5,24 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { OpenAIEmbeddings, ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
+import type { AnnouncementSource } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
+import { AppEmbeddings, getEmbeddingModel, getEmbeddingProvider } from "../common/embeddings.js";
+import {
+  fetchDirectPdfEmbeddingAttachments,
+  normalizeAndRankAttachments,
+  type RawAttachmentLike,
+} from "../common/attachment-text.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
+
+const MAX_DIRECT_EMBEDDING_ATTACHMENTS = 2;
+const MAX_DIRECT_EMBEDDING_PDF_PAGES = 6;
+const ATTACHMENT_VECTOR_WEIGHT = 0.25;
 
 // ── Klasyfikacja rodzaju ogłoszenia ─────────────────────────────────────────
 
@@ -75,13 +86,24 @@ export class EmbeddingService {
    *  1. Pobierz item z DB (jeśli kind już ustawiony — reużyj, nie klasyfikuj ponownie).
    *  2. Klasyfikuj kind przez gpt-4o-mini (lub OPENAI_CHAT_MODEL).
    *  3. Zbuduj augmented text: "RODZAJ: <label> | <searchContext>" dla lepszego semantic search.
-   *  4. Wygeneruj wektor z augmented text przez text-embedding-3-small.
+  *  4. Wygeneruj wektor z augmented text przez skonfigurowany provider embeddings.
    *  5. Zapisz embedding + kind + status=EMBEDDED przez raw SQL (pgvector).
    */
   async generateItemEmbedding(itemId: string): Promise<void> {
     const item = await this.prisma.announcementItem.findUnique({
       where: { id: itemId },
-      select: { id: true, searchContext: true, status: true, kind: true },
+      select: {
+        id: true,
+        searchContext: true,
+        status: true,
+        kind: true,
+        announcement: {
+          select: {
+            rawData: true,
+            sourceSystem: true,
+          },
+        },
+      },
     });
 
     if (!item) {
@@ -91,18 +113,17 @@ export class EmbeddingService {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) {
       throw new Error(
-        "OPENAI_API_KEY is not set — cannot generate embeddings",
+        "OPENAI_API_KEY is not set — cannot classify announcements or generate summaries",
       );
     }
 
-    const embeddingModel =
-      this.config.get<string>("OPENAI_EMBEDDING_MODEL") ??
-      "text-embedding-3-small";
+    const embeddingModel = getEmbeddingModel(this.config);
+    const embeddingProvider = getEmbeddingProvider(this.config);
     const chatModel =
       this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
 
     this.logger.debug(
-      `Embedding item ${itemId} | model="${embeddingModel}" | context=${item.searchContext.length} chars`,
+      `Embedding item ${itemId} | provider="${embeddingProvider}" | model="${embeddingModel}" | context=${item.searchContext.length} chars`,
     );
 
     try {
@@ -118,8 +139,14 @@ export class EmbeddingService {
       const augmentedText = `RODZAJ: ${kindLabel} | ${item.searchContext}`;
 
       // 3. Generowanie wektora z augmented text
-      const embedder = new OpenAIEmbeddings({ apiKey, model: embeddingModel });
-      const [vector] = await embedder.embedDocuments([augmentedText]);
+      const embedder = new AppEmbeddings(this.config);
+      const [baseVector] = await embedder.embedDocuments([augmentedText]);
+      const attachmentVectors = await this.generateAttachmentPdfEmbeddings(
+        item.announcement?.rawData as Record<string, unknown> | null,
+        item.announcement?.sourceSystem,
+        embedder,
+      );
+      const vector = this.blendVectors(baseVector, attachmentVectors);
 
       // Prisma nie obsługuje pgvector natywnie — zapisujemy przez raw SQL
       const vectorStr = `[${vector.join(",")}]`;
@@ -171,6 +198,87 @@ export class EmbeddingService {
 
       throw err; // BullMQ zarejestruje błąd joba (retry / dead-letter)
     }
+  }
+
+  private async generateAttachmentPdfEmbeddings(
+    rawData: Record<string, unknown> | null,
+    sourceSystem: AnnouncementSource | null | undefined,
+    embedder: AppEmbeddings,
+  ): Promise<number[][]> {
+    if (getEmbeddingProvider(this.config) !== "GOOGLE") {
+      return [];
+    }
+
+    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData?.attachments)
+      ? (rawData.attachments as RawAttachmentLike[])
+      : [];
+
+    if (allAttachments.length === 0) {
+      return [];
+    }
+
+    const rankedAttachments = normalizeAndRankAttachments(allAttachments, {
+      bkApiBaseUrl: this.config.get<string>("BK_API_BASE_URL"),
+      sourceSystem: sourceSystem ?? undefined,
+      maxAttachments: MAX_DIRECT_EMBEDDING_ATTACHMENTS,
+    });
+
+    const pdfAttachments = await fetchDirectPdfEmbeddingAttachments(
+      rankedAttachments,
+      {
+        maxAttachments: MAX_DIRECT_EMBEDDING_ATTACHMENTS,
+        maxPages: MAX_DIRECT_EMBEDDING_PDF_PAGES,
+      },
+      this.logger,
+    );
+
+    if (pdfAttachments.length === 0) {
+      return [];
+    }
+
+    this.logger.debug(
+      `Embedding ${pdfAttachments.length} short PDF attachment(s) directly with Gemini`,
+    );
+
+    return embedder.embedPdfDocuments(pdfAttachments.map((attachment) => attachment.buffer));
+  }
+
+  private blendVectors(baseVector: number[], attachmentVectors: number[][]): number[] {
+    if (attachmentVectors.length === 0) {
+      return baseVector;
+    }
+
+    const compatibleAttachments = attachmentVectors.filter(
+      (vector) => vector.length === baseVector.length,
+    );
+
+    if (compatibleAttachments.length === 0) {
+      return baseVector;
+    }
+
+    const normalizedBase = this.normalizeVector(baseVector);
+    const normalizedAttachments = compatibleAttachments.map((vector) => this.normalizeVector(vector));
+    const attachmentWeight = ATTACHMENT_VECTOR_WEIGHT / normalizedAttachments.length;
+    const baseWeight = 1 - ATTACHMENT_VECTOR_WEIGHT;
+
+    const blended = normalizedBase.map((value, index) => {
+      let total = value * baseWeight;
+      for (const attachmentVector of normalizedAttachments) {
+        total += attachmentVector[index] * attachmentWeight;
+      }
+      return total;
+    });
+
+    return this.normalizeVector(blended);
+  }
+
+  private normalizeVector(vector: number[]): number[] {
+    const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+    if (!Number.isFinite(magnitude) || magnitude === 0) {
+      return vector;
+    }
+
+    return vector.map((value) => value / magnitude);
   }
 
   // ── Prywatne ────────────────────────────────────────────────────────────────

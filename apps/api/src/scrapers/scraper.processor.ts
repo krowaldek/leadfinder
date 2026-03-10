@@ -3,6 +3,7 @@ import { Inject, Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { BkScraperService } from "./bk/bk.scraper.service.js";
 import { SCRAPER_QUEUE, ScraperJob } from "./scraper-queue.constants.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 
 @Processor(SCRAPER_QUEUE, { concurrency: 1 })
 export class ScraperProcessor extends WorkerHost {
@@ -11,6 +12,8 @@ export class ScraperProcessor extends WorkerHost {
   constructor(
     @Inject(BkScraperService)
     private readonly bkScraper: BkScraperService,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {
     super();
   }
@@ -19,9 +22,33 @@ export class ScraperProcessor extends WorkerHost {
     this.logger.log(`Processing job: ${job.name} (id=${job.id})`);
 
     switch (job.name) {
-      case ScraperJob.BK_SYNC:
-        await this.bkScraper.run();
+      case ScraperJob.BK_SYNC: {
+        const logId = await this.jobLogger.start({
+          type: "SCRAPER",
+          jobId: job.id,
+          jobName: job.name,
+          payload: { source: "BAZA_KONKURENCYJNOSCI", triggeredAt: new Date().toISOString() },
+        });
+        try {
+          const result = await this.bkScraper.run();
+          await this.jobLogger.finish({
+            logId,
+            status: "COMPLETED",
+            result: {
+              source: "BAZA_KONKURENCYJNOSCI",
+              discovered: result.discovered,
+              saved: result.saved,
+              failed: result.failed,
+              skipped: result.skipped,
+            },
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+          throw err;
+        }
         break;
+      }
 
       default:
         this.logger.warn(`Unknown job name: ${job.name}`);

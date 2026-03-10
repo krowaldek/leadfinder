@@ -13,9 +13,13 @@ const envSchema = z.object({
   EZ_API_BASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().default("redis://localhost:6380"),
   BK_SCRAPER_CRON: z.string().default("0 6 * * *"),
+  EMBEDDING_PROVIDER: z.enum(["OPENAI", "GOOGLE"]).default("OPENAI"),
+  EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_CHAT_MODEL: z.string().default("gpt-4o-mini"),
+  GOOGLE_API_KEY: z.string().optional(),
+  GOOGLE_EMBEDDING_MODEL: z.string().default("gemini-embedding-2-preview"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

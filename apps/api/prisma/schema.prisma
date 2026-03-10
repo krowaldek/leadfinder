@@ -253,3 +253,42 @@ model ClientMatch {
   @@index([status])
   @@map("client_matches")
 }
+
+// ---------------------------------------------------------------------------
+// System Job Logs
+// ---------------------------------------------------------------------------
+
+enum JobLogType {
+  SCRAPER
+  EMBEDDING
+  REPORT
+}
+
+enum JobLogStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+model JobLog {
+  id          String       @id @default(cuid())
+  type        JobLogType
+  jobId       String?
+  jobName     String
+  status      JobLogStatus
+  entityId    String?
+  entityTitle String?
+  payload     Json?
+  result      Json?
+  error       String?      @db.Text
+  durationMs  Int?
+  startedAt   DateTime     @default(now())
+  finishedAt  DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([type])
+  @@index([status])
+  @@index([type, status])
+  @@index([startedAt])
+  @@map("job_logs")
+}

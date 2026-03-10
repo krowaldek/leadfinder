@@ -1,8 +1,8 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { OpenAIEmbeddings } from "@langchain/openai";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
+import { AppEmbeddings } from "../common/embeddings.js";
 
 interface MatchRow {
   announcement_item_id: string;
@@ -38,11 +38,6 @@ export class ClientMatchingService {
 
     if (!client) throw new Error(`Client not found: ${clientId}`);
 
-    const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-    const model =
-      this.config.get<string>("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small";
-
     this.logger.debug(
       `Generating profile embedding for client: ${client.companyName}`,
     );
@@ -52,7 +47,7 @@ export class ClientMatchingService {
       .split("WYKLUCZENIA:")[0]
       .trim();
 
-    const embedder = new OpenAIEmbeddings({ apiKey, model });
+    const embedder = new AppEmbeddings(this.config);
     const [vector] = await embedder.embedDocuments([embeddingText]);
     const vectorStr = `[${vector.join(",")}]`;
 
