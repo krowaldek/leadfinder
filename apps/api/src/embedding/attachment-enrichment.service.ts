@@ -2,22 +2,17 @@ import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
-import axios from "axios";
-import { createRequire } from "node:module";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
-import type { BkAttachment } from "../scrapers/bk/bk.mapper.js";
-
-// pdf-parse jest modułem CJS — używamy createRequire dla kompatybilności z ESM
-const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (
-  buffer: Buffer,
-  options?: Record<string, unknown>,
-) => Promise<{ text: string; numpages: number }>;
+import {
+  extractAttachmentTexts,
+  normalizeAndRankAttachments,
+  type AttachmentCacheAdapter,
+  type RawAttachmentLike,
+} from "../common/attachment-text.js";
 
 // ---------------------------------------------------------------------------
 // Limity
@@ -28,6 +23,9 @@ const MAX_ATTACHMENTS = 3;
 
 /** Maksymalna liczba znaków tekstu wyciągniętego z jednego pliku */
 const MAX_CHARS_PER_FILE = 4_000;
+
+/** Maksymalna liczba znaków ze wszystkich załączników per item */
+const MAX_TOTAL_ATTACHMENT_CHARS = 12_000;
 
 /** Maksymalna liczba tokenów w odpowiedzi GPT */
 const MAX_SUMMARY_TOKENS = 500;
@@ -58,12 +56,12 @@ export class AttachmentEnrichmentService {
   ) {}
 
   /**
-   * Pipeline wzbogacania kontekstu o treść załączników PDF.
+  * Pipeline wzbogacania kontekstu o treść najistotniejszych załączników tekstowych.
    *
    * Kroki:
    *  1. Pobierz AnnouncementItem + Announcement.rawData
-   *  2. Wyciągnij listę załączników PDF (maks. MAX_ATTACHMENTS, skip ZIP/unknown)
-   *  3. Pobierz każdy plik, wyciągnij tekst (pdf-parse), skróć do MAX_CHARS_PER_FILE
+  *  2. Wybierz najistotniejsze załączniki tekstowe (PDF/DOCX/TXT/HTML/...)
+  *  3. Pobierz każdy plik, wyciągnij tekst, skróć do budżetu znaków
    *  4. Przekaż zebrany tekst do GPT-4o-mini → krótkie podsumowanie
    *  5. Dopisz "| ZAŁĄCZNIKI: {summary}" do searchContext
    *  6. Wrzuć item ponownie do kolejki EMBED_ITEM (re-embedding z nowym kontekstem)
@@ -97,21 +95,25 @@ export class AttachmentEnrichmentService {
 
     // ── 2. Wyciągnij załączniki ──────────────────────────────────────────────
     const rawData = item.announcement.rawData as Record<string, unknown>;
-    const allAttachments: BkAttachment[] = Array.isArray(rawData.attachments)
-      ? (rawData.attachments as BkAttachment[])
+    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData.attachments)
+      ? (rawData.attachments as RawAttachmentLike[])
       : [];
 
-    const pdfAttachments = allAttachments
-      .filter((a) => a.file?.uri && isPdfByName(a.name ?? a.file?.name ?? ""))
-      .slice(0, MAX_ATTACHMENTS);
+    const bkApiBase = this.config.get<string>("BK_API_BASE_URL");
+    const cache = this.createAttachmentCacheAdapter();
+    const rankedAttachments = normalizeAndRankAttachments(allAttachments, {
+      bkApiBaseUrl: bkApiBase,
+      sourceSystem: item.announcement.sourceSystem,
+      maxAttachments: MAX_ATTACHMENTS,
+    });
 
-    if (pdfAttachments.length === 0) {
-      this.logger.debug(`Item ${itemId} — no PDF attachments, skipping enrichment`);
+    if (rankedAttachments.length === 0) {
+      this.logger.debug(`Item ${itemId} — no supported attachments, skipping enrichment`);
       return;
     }
 
     this.logger.log(
-      `Item ${itemId} — enriching with ${pdfAttachments.length} PDF attachment(s)`,
+      `Item ${itemId} — enriching with ${rankedAttachments.length} ranked attachment(s)`,
     );
 
     // ── 3. Pobierz i parsuj pliki ────────────────────────────────────────────
@@ -121,27 +123,16 @@ export class AttachmentEnrichmentService {
       return;
     }
 
-    const bkApiBase = this.config.get<string>("BK_API_BASE_URL");
-    if (!bkApiBase) {
-      this.logger.warn("BK_API_BASE_URL not set — cannot download attachments");
-      return;
-    }
-
-    const extractedTexts: string[] = [];
-
-    for (const attachment of pdfAttachments) {
-      const fileUrl = buildFileUrl(bkApiBase, attachment.file.uri);
-      try {
-        const text = await this.downloadAndExtractPdf(fileUrl, attachment.name);
-        if (text) {
-          extractedTexts.push(`[${attachment.name}]\n${text}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(`Failed to process attachment "${attachment.name}": ${msg}`);
-        // Kontynuuj z pozostałymi załącznikami
-      }
-    }
+    const extractedTexts = await extractAttachmentTexts(
+      rankedAttachments,
+      {
+        maxAttachments: MAX_ATTACHMENTS,
+        maxCharsPerFile: MAX_CHARS_PER_FILE,
+        maxTotalChars: MAX_TOTAL_ATTACHMENT_CHARS,
+      },
+      this.logger,
+      cache,
+    );
 
     if (extractedTexts.length === 0) {
       this.logger.warn(`Item ${itemId} — all attachment downloads/parses failed`);
@@ -187,34 +178,6 @@ export class AttachmentEnrichmentService {
 
   // ── Prywatne ───────────────────────────────────────────────────────────────
 
-  private async downloadAndExtractPdf(
-    url: string,
-    name: string,
-  ): Promise<string | null> {
-    this.logger.debug(`Downloading attachment: ${url}`);
-
-    const response = await axios.get<ArrayBuffer>(url, {
-      responseType: "arraybuffer",
-      timeout: 30_000,
-      maxContentLength: 20 * 1024 * 1024, // 20 MB hard limit
-    });
-
-    const buffer = Buffer.from(response.data);
-    this.logger.debug(
-      `Downloaded "${name}" — ${(buffer.byteLength / 1024).toFixed(0)} kB`,
-    );
-
-    const parsed = await pdfParse(buffer, { max: 10 }); // maks. 10 stron
-    const text = parsed.text.replace(/\s+/g, " ").trim();
-
-    if (!text) {
-      this.logger.debug(`"${name}" — no extractable text (scan/image PDF?)`);
-      return null;
-    }
-
-    return text.slice(0, MAX_CHARS_PER_FILE);
-  }
-
   private async summarizeAttachments(
     text: string,
     apiKey: string,
@@ -245,27 +208,50 @@ export class AttachmentEnrichmentService {
       return null;
     }
   }
-}
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isPdfByName(filename: string): boolean {
-  return filename.toLowerCase().endsWith(".pdf");
-}
-
-/**
- * Buduje URL do pliku z BK API.
- * uri ma postać "/api/files/{id}" — łączymy z bazą API (np. "https://.../api").
- * Ponieważ uri zaczyna się od "/api/", wycinamy "/api" z bazy żeby nie duplikować.
- */
-function buildFileUrl(apiBaseUrl: string, fileUri: string): string {
-  // apiBaseUrl np. "https://bazakonkurencyjnosci.funduszeeuropejskie.gov.pl/api"
-  // fileUri np. "/api/files/2383677"
-  // wynik: "https://bazakonkurencyjnosci.funduszeeuropejskie.gov.pl/api/files/2383677"
-  const base = apiBaseUrl.endsWith("/api")
-    ? apiBaseUrl.slice(0, -4) // usuń trailing /api
-    : apiBaseUrl.replace(/\/$/, "");
-  return `${base}${fileUri}`;
+  private createAttachmentCacheAdapter(): AttachmentCacheAdapter {
+    return {
+      get: (cacheKey) =>
+        this.prisma.attachmentCache.findUnique({
+          where: { cacheKey },
+          select: {
+            cacheKey: true,
+            extractedText: true,
+            extractionMethod: true,
+            status: true,
+            failureReason: true,
+          },
+        }),
+      set: async (input) => {
+        await this.prisma.attachmentCache.upsert({
+          where: { cacheKey: input.cacheKey },
+          create: {
+            cacheKey: input.cacheKey,
+            sourceSystem: input.sourceSystem,
+            attachmentUrl: input.attachmentUrl,
+            attachmentName: input.attachmentName,
+            fileExt: input.fileExt,
+            contentType: input.contentType,
+            extractedText: input.extractedText,
+            extractionMethod: input.extractionMethod,
+            status: input.status,
+            failureReason: input.failureReason,
+            lastFetchedAt: new Date(),
+          },
+          update: {
+            sourceSystem: input.sourceSystem,
+            attachmentUrl: input.attachmentUrl,
+            attachmentName: input.attachmentName,
+            fileExt: input.fileExt,
+            contentType: input.contentType,
+            extractedText: input.extractedText,
+            extractionMethod: input.extractionMethod,
+            status: input.status,
+            failureReason: input.failureReason,
+            lastFetchedAt: new Date(),
+          },
+        });
+      },
+    };
+  }
 }

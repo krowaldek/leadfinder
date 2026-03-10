@@ -1,28 +1,19 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createRequire } from "node:module";
-import axios from "axios";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
+import {
+  extractAttachmentTexts,
+  normalizeAndRankAttachments,
+  type AttachmentCacheAdapter,
+  type RawAttachmentLike,
+} from "../common/attachment-text.js";
 
-// pdf-parse jest modułem CJS — używamy createRequire dla kompatybilności z ESM
-const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (
-  buffer: Buffer,
-  options?: Record<string, unknown>,
-) => Promise<{ text: string; numpages: number }>;
-
-const MAX_CHARS_PER_FILE = 5_000;
-const MAX_ATTACHMENTS = 3;
-
-interface RawAttachment {
-  name: string;
-  url: string;
-  type?: string;
-}
+const MAX_CHARS_PER_FILE = 7_000;
+const MAX_TOTAL_ATTACHMENT_CHARS = 24_000;
+const MAX_ATTACHMENTS = 5;
 
 const REPORT_SYSTEM_PROMPT = `Jesteś ekspertem analizującym polskie zapytania ofertowe i przetargi publiczne.
 Wygeneruj pełny raport analizy w języku polskim na podstawie podanych danych.
@@ -78,6 +69,7 @@ export class AnnouncementReportService {
       where: { id: announcementId },
       select: {
         id: true,
+        sourceSystem: true,
         title: true,
         description: true,
         rawData: true,
@@ -99,40 +91,29 @@ export class AnnouncementReportService {
 
     if (!announcement) throw new NotFoundException("Announcement not found");
 
-    // ── 1. Zbierz załączniki PDF ─────────────────────────────────────────────
+    // ── 1. Zbierz i wybierz najistotniejsze załączniki ──────────────────────
     const rawData = announcement.rawData as Record<string, unknown> | null;
-    const allAttachments: RawAttachment[] = Array.isArray(rawData?.attachments)
-      ? (rawData!.attachments as RawAttachment[]).filter(
-          (a) => typeof a.url === "string" && typeof a.name === "string",
-        )
+    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData?.attachments)
+      ? (rawData.attachments as RawAttachmentLike[])
       : [];
+    const bkApiBaseUrl = this.config.get<string>("BK_API_BASE_URL");
+    const cache = this.createAttachmentCacheAdapter();
+    const rankedAttachments = normalizeAndRankAttachments(allAttachments, {
+      bkApiBaseUrl,
+      sourceSystem: announcement.sourceSystem,
+      maxAttachments: MAX_ATTACHMENTS,
+    });
 
-    const pdfAttachments = allAttachments
-      .filter((a) => {
-        const name = a.name.toLowerCase();
-        return name.endsWith(".pdf") || a.type === "pdf";
-      })
-      .slice(0, MAX_ATTACHMENTS);
-
-    const pdfTexts: string[] = [];
-    for (const att of pdfAttachments) {
-      try {
-        const res = await axios.get<ArrayBuffer>(att.url, {
-          responseType: "arraybuffer",
-          timeout: 30_000,
-          maxContentLength: 20 * 1024 * 1024,
-        });
-        const buf = Buffer.from(res.data);
-        const parsed = await pdfParse(buf, { max: 10 });
-        const text = parsed.text.replace(/\s{3,}/g, "\n").trim().slice(0, MAX_CHARS_PER_FILE);
-        pdfTexts.push(`--- ${att.name} ---\n${text}`);
-        this.logger.debug(`Parsed PDF: ${att.name} (${text.length} chars)`);
-      } catch (err) {
-        this.logger.warn(
-          `PDF parse failed (${att.name}): ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    const attachmentTexts = await extractAttachmentTexts(
+      rankedAttachments,
+      {
+        maxAttachments: MAX_ATTACHMENTS,
+        maxCharsPerFile: MAX_CHARS_PER_FILE,
+        maxTotalChars: MAX_TOTAL_ATTACHMENT_CHARS,
+      },
+      this.logger,
+      cache,
+    );
 
     // ── 2. Zbuduj kontekst pozycji ───────────────────────────────────────────
     const itemsContext = announcement.items
@@ -150,9 +131,9 @@ export class AnnouncementReportService {
       .join("\n\n---\n\n");
 
     const attachmentsContext =
-      pdfTexts.length > 0
-        ? `\n\n==================\nTREŚĆ ZAŁĄCZNIKÓW PDF:\n==================\n\n${pdfTexts.join("\n\n")}`
-        : "\n\n(Brak dostępnych załączników PDF.)";
+      attachmentTexts.length > 0
+        ? `\n\n==================\nTREŚĆ KLUCZOWYCH ZAŁĄCZNIKÓW:\n==================\n\n${attachmentTexts.join("\n\n---\n\n")}`
+        : "\n\n(Brak dostępnych załączników tekstowych do analizy.)";
 
     // ── 3. Wywołaj GPT ───────────────────────────────────────────────────────
     const apiKey = this.config.getOrThrow("OPENAI_API_KEY");
@@ -189,5 +170,51 @@ export class AnnouncementReportService {
 
     this.logger.log(`Report generated for announcement ${announcementId} (${report.length} chars)`);
     return report;
+  }
+
+  private createAttachmentCacheAdapter(): AttachmentCacheAdapter {
+    return {
+      get: (cacheKey) =>
+        this.prisma.attachmentCache.findUnique({
+          where: { cacheKey },
+          select: {
+            cacheKey: true,
+            extractedText: true,
+            extractionMethod: true,
+            status: true,
+            failureReason: true,
+          },
+        }),
+      set: async (input) => {
+        await this.prisma.attachmentCache.upsert({
+          where: { cacheKey: input.cacheKey },
+          create: {
+            cacheKey: input.cacheKey,
+            sourceSystem: input.sourceSystem,
+            attachmentUrl: input.attachmentUrl,
+            attachmentName: input.attachmentName,
+            fileExt: input.fileExt,
+            contentType: input.contentType,
+            extractedText: input.extractedText,
+            extractionMethod: input.extractionMethod,
+            status: input.status,
+            failureReason: input.failureReason,
+            lastFetchedAt: new Date(),
+          },
+          update: {
+            sourceSystem: input.sourceSystem,
+            attachmentUrl: input.attachmentUrl,
+            attachmentName: input.attachmentName,
+            fileExt: input.fileExt,
+            contentType: input.contentType,
+            extractedText: input.extractedText,
+            extractionMethod: input.extractionMethod,
+            status: input.status,
+            failureReason: input.failureReason,
+            lastFetchedAt: new Date(),
+          },
+        });
+      },
+    };
   }
 }

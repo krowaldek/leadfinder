@@ -154,6 +154,33 @@ model AnnouncementItem {
   @@map("announcement_items")
 }
 
+enum AttachmentCacheStatus {
+  SUCCESS
+  FAILED
+  UNSUPPORTED
+}
+
+model AttachmentCache {
+  id               String                @id @default(uuid()) @db.Uuid
+  cacheKey         String                @unique
+  sourceSystem     AnnouncementSource?
+  attachmentUrl    String
+  attachmentName   String
+  fileExt          String?
+  contentType      String?
+  extractedText    String?               @db.Text
+  extractionMethod String?
+  status           AttachmentCacheStatus @default(SUCCESS)
+  failureReason    String?               @db.Text
+  lastFetchedAt    DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([sourceSystem])
+  @@index([status])
+  @@map("attachment_cache")
+}
+
 model ScraperMetadata {
   id                  Int                 @id @default(autoincrement())
   providerName        AnnouncementSource  @unique
