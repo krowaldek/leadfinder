@@ -49,24 +49,37 @@ export class BkScraperService {
       return { newIds: [], listItems: [] };
     }
 
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const url =
-      `${this.apiBaseUrl}/announcements/search` +
-      `?page=1&limit=100&sort=default` +
-      `&submissionDeadlineRange%5Bfrom%5D=${today}` +
-      `&status%5B0%5D=PUBLISHED`;
+    // Pobieramy wszystkie opublikowane ogłoszenia bez filtra daty — pełna paginacja
+    const PAGE_SIZE = 100;
+    const allItems: BkListItem[] = [];
+    let page = 1;
+    let totalPages = 1;
 
-    this.logger.log(`Fetching BK list: ${url}`);
+    do {
+      const url =
+        `${this.apiBaseUrl}/announcements/search` +
+        `?page=${page}&limit=${PAGE_SIZE}&sort=default` +
+        `&status%5B0%5D=PUBLISHED`;
 
-    const { data: envelope } = await axios.get<BkSearchResponse>(url);
-    const items = envelope.data?.advertisements ?? [];
+      this.logger.log(`Fetching BK list page ${page}/${totalPages}: ${url}`);
 
-    if (items.length === 0) {
+      const { data: envelope } = await axios.get<BkSearchResponse>(url);
+      const items = envelope.data?.advertisements ?? [];
+      const total = envelope.data?.meta?.total ?? 0;
+
+      allItems.push(...items);
+      totalPages = Math.ceil(total / PAGE_SIZE);
+      page++;
+    } while (page <= totalPages);
+
+    if (allItems.length === 0) {
       this.logger.log("BK list returned 0 items");
       return { newIds: [], listItems: [] };
     }
 
-    const fetchedIds = items.map((item) => String(item.id));
+    this.logger.log(`BK: fetched ${allItems.length} items across ${totalPages} page(s)`);
+
+    const fetchedIds = allItems.map((item) => String(item.id));
 
     const existing = await this.prisma.announcement.findMany({
       where: {
@@ -83,7 +96,7 @@ export class BkScraperService {
       `BK: ${fetchedIds.length} fetched, ${existingIds.size} already in DB, ${newIds.length} new`,
     );
 
-    return { newIds, listItems: items };
+    return { newIds, listItems: allItems };
   }
 
   // ---------------------------------------------------------------------------
