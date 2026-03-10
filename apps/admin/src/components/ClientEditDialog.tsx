@@ -34,7 +34,8 @@ export function ClientEditDialog({ open, client, onOpenChange }: ClientEditDialo
   const queryClient = useQueryClient();
 
   const form = useForm<ClientProfileFields>({
-    resolver: zodResolver(clientProfileFieldsSchema),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(clientProfileFieldsSchema as any),
     values: {
       companyName: client?.companyName ?? "",
       industry: client?.industry ?? "",

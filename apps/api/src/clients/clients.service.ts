@@ -132,6 +132,8 @@ export class ClientsService {
           description: m.announcementItem.description,
           price: m.announcementItem.price?.toString() ?? null,
           kind: m.announcementItem.kind ?? null,
+          shortSummary: m.announcementItem.shortSummary ?? null,
+          llmEstimatedValue: m.announcementItem.llmEstimatedValue?.toString() ?? null,
           searchContext: m.announcementItem.searchContext,
           announcement: {
             id: m.announcementItem.announcement.id,

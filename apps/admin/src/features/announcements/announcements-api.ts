@@ -1,6 +1,7 @@
 import {
   announcementsListResponseSchema,
   announcementResponseSchema,
+  announcementReportResponseSchema,
   searchResponseSchema,
   type AnnouncementSource,
   type AnnouncementStatus,
@@ -97,4 +98,10 @@ export async function searchAnnouncementsAi({
     throw new Error(`Response validation failed: ${result.error.message}`);
   }
   return result.data;
+}
+
+/** Generuje (lub regeneruje) pełny raport analityczny dla ogłoszenia. */
+export async function generateAnnouncementReport(id: string) {
+  const response = await api.post(`/announcements/${id}/report`);
+  return announcementReportResponseSchema.parse(response.data);
 }

@@ -115,6 +115,8 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
   const ann = item.announcement;
   const sc = (item as { searchContext?: string }).searchContext;
   const kind = (item as { kind?: string | null }).kind;
+  const shortSummary = (item as { shortSummary?: string | null }).shortSummary;
+  const llmEstimatedValue = (item as { llmEstimatedValue?: string | null }).llmEstimatedValue;
   const parsedCtx = sc ? parseSearchContext(sc) : null;
 
   return (
@@ -144,6 +146,30 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
         <Separator />
 
         <div className="grid gap-6 px-6 py-5">
+
+          {/* Podsumowanie LLM */}
+          {(shortSummary || llmEstimatedValue) && (
+            <>
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 grid gap-1.5">
+                {shortSummary && (
+                  <p className="text-sm font-medium text-foreground">{shortSummary}</p>
+                )}
+                {llmEstimatedValue && (
+                  <p className="text-xs text-muted-foreground">
+                    Wartość szacunkowa (LLM):{" "}
+                    <span className="font-semibold text-foreground">
+                      {Number(llmEstimatedValue).toLocaleString("pl-PL", {
+                        style: "currency",
+                        currency: "PLN",
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
+                  </p>
+                )}
+              </div>
+              <Separator />
+            </>
+          )}
 
           {/* Wynik dopasowania */}
           <Section title="Dlaczego to dopasowanie?">
@@ -221,6 +247,20 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
                 <Field
                   label="Cena pozycji"
                   value={`${Number(item.price).toLocaleString("pl-PL")} PLN`}
+                />
+              )}
+              {llmEstimatedValue && (
+                <Field
+                  label="Wartość (LLM)"
+                  value={
+                    <span className="font-semibold">
+                      {Number(llmEstimatedValue).toLocaleString("pl-PL", {
+                        style: "currency",
+                        currency: "PLN",
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
+                  }
                 />
               )}
               <Field label="Dopasowanie dodano" value={format(new Date(match.createdAt), "dd.MM.yyyy HH:mm", { locale: pl })} />

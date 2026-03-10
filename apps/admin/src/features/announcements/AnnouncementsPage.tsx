@@ -25,6 +25,7 @@ import {
   STATUS_LABELS,
 } from "@/components/RawDataDialog";
 import { AnnouncementAiSearchDialog } from "@/components/AnnouncementAiSearchDialog";
+import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
 
 const PAGE_SIZE = 20;
 
@@ -164,6 +165,7 @@ export function AnnouncementsPage() {
   const [sourceFilter, setSourceFilter] = useState<AnnouncementSource | "ALL">("ALL");
   const [statusFilter, setStatusFilter] = useState<AnnouncementStatus | "ALL">("ALL");
   const [selected, setSelected] = useState<Announcement | null>(null);
+  const [reportTarget, setReportTarget] = useState<Announcement | null>(null);
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
 
   const query = useQuery({
@@ -187,16 +189,23 @@ export function AnnouncementsPage() {
         id: "title",
         header: "Ogłoszenie",
         accessorFn: (a) => a,
-        cell: ({ row }) => (
-          <div className="max-w-[420px]">
-            <div className="line-clamp-2 font-medium">{row.title}</div>
-            {row.description && (
-              <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                {row.description}
-              </div>
-            )}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const summary = row.items?.[0]?.shortSummary;
+          return (
+            <div className="max-w-[420px]">
+              <div className="line-clamp-2 font-medium">{row.title}</div>
+              {summary ? (
+                <div className="mt-0.5 line-clamp-1 text-xs text-primary/70 font-medium">
+                  {summary}
+                </div>
+              ) : row.description ? (
+                <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                  {row.description}
+                </div>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         id: "source",
@@ -256,6 +265,24 @@ export function AnnouncementsPage() {
         },
       },
       {
+        id: "llmValue",
+        header: "Wartość (LLM)",
+        accessorFn: (a) => a.items?.[0]?.llmEstimatedValue ?? null,
+        cell: ({ row }) => {
+          const val = row.items?.[0]?.llmEstimatedValue;
+          if (!val) return <span className="text-muted-foreground text-xs">—</span>;
+          return (
+            <span className="text-sm font-medium tabular-nums">
+              {Number(val).toLocaleString("pl-PL", {
+                style: "currency",
+                currency: "PLN",
+                maximumFractionDigits: 0,
+              })}
+            </span>
+          );
+        },
+      },
+      {
         id: "createdAt",
         header: "Dodano",
         accessorFn: (a) => format(new Date(a.createdAt), "dd.MM.yyyy"),
@@ -270,6 +297,11 @@ export function AnnouncementsPage() {
         id: "preview",
         label: "Podgląd danych",
         onClick: (a) => setSelected(a),
+      },
+      {
+        id: "report",
+        label: "Raport analityczny",
+        onClick: (a) => setReportTarget(a),
       },
       {
         id: "open",
@@ -364,6 +396,11 @@ export function AnnouncementsPage() {
         announcement={selected}
         open={!!selected}
         onClose={() => setSelected(null)}
+      />
+      <AnnouncementReportDialog
+        announcement={reportTarget}
+        open={!!reportTarget}
+        onClose={() => setReportTarget(null)}
       />
       <AnnouncementAiSearchDialog
         open={aiDialogOpen}

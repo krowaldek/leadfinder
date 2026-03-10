@@ -135,11 +135,26 @@ export class EmbeddingService {
         WHERE id = ${itemId}::uuid
       `;
 
+      // 5. Generuj shortSummary i llmEstimatedValue (na podstawie aktualnego searchContext)
+      const { summary, estimatedValue } = await this.generateSummaryAndValue(
+        item.searchContext,
+        apiKey,
+        chatModel,
+      );
+
+      await this.prisma.announcementItem.update({
+        where: { id: itemId },
+        data: {
+          shortSummary: summary,
+          llmEstimatedValue: estimatedValue != null ? String(estimatedValue) : null,
+        },
+      });
+
       this.logger.log(
         `Embedded item ${itemId} → kind=${kind} (${vector.length} dims)`,
       );
 
-      // 5. Jeśli item nie był jeszcze wzbogacony i ogłoszenie ma załączniki PDF
+      // 6. Jeśli item nie był jeszcze wzbogacony i ogłoszenie ma załączniki PDF
       //    — kolejkuj ENRICH_ITEM (zostanie uruchomiony asynchronicznie po embedowaniu)
       if (!item.searchContext.includes("| ZAŁĄCZNIKI:")) {
         await this.maybeEnqueueEnrichment(itemId);
@@ -236,6 +251,49 @@ export class EmbeddingService {
     }
 
     return matched ?? "INNE";
+  }
+
+  /**
+   * Generuje krótkie podsumowanie ogłoszenia i szacowaną wartość na podstawie searchContext.
+   * Zwraca JSON: { summary: string, estimatedValue: number | null }
+   */
+  async generateSummaryAndValue(
+    searchContext: string,
+    apiKey: string,
+    model: string,
+  ): Promise<{ summary: string; estimatedValue: number | null }> {
+    const FALLBACK = { summary: "", estimatedValue: null };
+    try {
+      const chat = new ChatOpenAI({ apiKey, model, temperature: 0, maxTokens: 200 });
+
+      const response = await chat.invoke([
+        new SystemMessage(
+          `Jesteś klasyfikatorem polskich zapytań ofertowych. Na podstawie podanego kontekstu wygeneruj TYLKO JSON (bez żadnego dodatkowego tekstu):
+{"summary":"max 15 słów, zaczynaj od kategorii np. Dostawa: notebooki, tablety, gogle VR lub Usługa: sprzątanie biur","estimatedValue":150000}
+Zasady:
+- summary: kategoria + lista głównych pozycji/zakresu, bez szczegółów
+- estimatedValue: liczba PLN netto (int) lub null jeśli nie można oszacować`,
+        ),
+        new HumanMessage(searchContext),
+      ]);
+
+      const raw = typeof response.content === "string" ? response.content.trim() : "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { summary: raw.slice(0, 200) || "", estimatedValue: null };
+
+      const parsed = JSON.parse(match[0]) as { summary?: string; estimatedValue?: unknown };
+      const estimatedValue =
+        typeof parsed.estimatedValue === "number" && Number.isFinite(parsed.estimatedValue)
+          ? parsed.estimatedValue
+          : null;
+
+      return { summary: parsed.summary?.slice(0, 300) ?? "", estimatedValue };
+    } catch (err) {
+      this.logger.warn(
+        `generateSummaryAndValue failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return FALLBACK;
+    }
   }
 
   /**

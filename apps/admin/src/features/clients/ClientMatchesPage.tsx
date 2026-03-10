@@ -222,6 +222,23 @@ export function ClientMatchesPage() {
       },
     },
     {
+      id: "llmValue",
+      header: "Wartość (LLM)",
+      cell: ({ row }) => {
+        const val = (row.announcementItem as { llmEstimatedValue?: string | null }).llmEstimatedValue;
+        if (!val) return <span className="text-xs text-muted-foreground">—</span>;
+        return (
+          <span className="text-sm font-medium tabular-nums whitespace-nowrap">
+            {Number(val).toLocaleString("pl-PL", {
+              style: "currency",
+              currency: "PLN",
+              maximumFractionDigits: 0,
+            })}
+          </span>
+        );
+      },
+    },
+    {
       id: "deadlineAt",
       header: (
         <SortHeader col="deadlineAt" label="Termin składania" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />

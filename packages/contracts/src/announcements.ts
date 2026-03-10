@@ -16,6 +16,15 @@ export const announcementStatusSchema = z.enum([
 ]);
 export type AnnouncementStatus = z.infer<typeof announcementStatusSchema>;
 
+/** Lekkie podsumowanie pozycji ogłoszenia — używane w widoku listy */
+export const announcementItemSummarySchema = z.object({
+  id: z.string().uuid(),
+  shortSummary: z.string().nullable(),
+  llmEstimatedValue: z.string().nullable(),
+  kind: z.string().nullable(),
+});
+export type AnnouncementItemSummary = z.infer<typeof announcementItemSummarySchema>;
+
 export const announcementSchema = z.object({
   id: z.string().uuid(),
   sourceSystem: announcementSourceSchema,
@@ -29,6 +38,8 @@ export const announcementSchema = z.object({
   publishedAt: z.string().datetime().nullable(),
   deadlineAt: z.string().datetime().nullable(),
   rawData: z.unknown(),
+  detailedReport: z.string().nullable().optional(),
+  items: z.array(announcementItemSummarySchema).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -50,3 +61,10 @@ export const announcementResponseSchema = z.object({
   data: announcementSchema,
 });
 export type AnnouncementResponse = z.infer<typeof announcementResponseSchema>;
+
+export const announcementReportResponseSchema = z.object({
+  data: z.object({
+    detailedReport: z.string(),
+  }),
+});
+export type AnnouncementReportResponse = z.infer<typeof announcementReportResponseSchema>;

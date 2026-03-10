@@ -117,7 +117,8 @@ function ResultCard({ item, index }: { item: SearchResultItem; index: number }) 
 
 export function AnnouncementAiSearchDialog({ open, onOpenChange }: AnnouncementAiSearchDialogProps) {
   const form = useForm<SearchFormValues>({
-    resolver: zodResolver(searchFormSchema),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(searchFormSchema as any),
     defaultValues: { q: "", mode: "HYBRID", limit: 12, threshold: 0.3 },
   });
 

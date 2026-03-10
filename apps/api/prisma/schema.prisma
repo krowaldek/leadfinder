@@ -88,22 +88,23 @@ enum AnnouncementStatus {
 }
 
 model Announcement {
-  id           String              @id @default(uuid()) @db.Uuid
-  sourceSystem AnnouncementSource
-  externalId   String
-  title        String
-  description  String?
-  url          String
-  status       AnnouncementStatus  @default(OPEN)
-  valueMin     Decimal?            @db.Decimal(15, 2)
-  valueMax     Decimal?            @db.Decimal(15, 2)
-  publishedAt  DateTime?
-  deadlineAt   DateTime?
-  embedding    Unsupported("vector(1536)")?
-  rawData      Json
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-  items        AnnouncementItem[]
+  id             String              @id @default(uuid()) @db.Uuid
+  sourceSystem   AnnouncementSource
+  externalId     String
+  title          String
+  description    String?
+  url            String
+  status         AnnouncementStatus  @default(OPEN)
+  valueMin       Decimal?            @db.Decimal(15, 2)
+  valueMax       Decimal?            @db.Decimal(15, 2)
+  publishedAt    DateTime?
+  deadlineAt     DateTime?
+  embedding      Unsupported("vector(1536)")?
+  rawData        Json
+  detailedReport String?             @db.Text
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  items          AnnouncementItem[]
 
   @@unique([sourceSystem, externalId])
   @@index([sourceSystem])
@@ -130,20 +131,22 @@ enum AnnouncementKind {
 }
 
 model AnnouncementItem {
-  id             String                 @id @default(uuid()) @db.Uuid
-  announcementId String                 @db.Uuid
-  itemIndex      Int
-  title          String
-  description    String?                @db.Text
-  searchContext  String                 @db.Text
-  embedding      Unsupported("vector(1536)")?
-  price          Decimal?               @db.Decimal(15, 2)
-  kind           AnnouncementKind?
-  status         AnnouncementItemStatus @default(PENDING)
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  announcement   Announcement           @relation(fields: [announcementId], references: [id], onDelete: Cascade)
-  clientMatches  ClientMatch[]
+  id                String                 @id @default(uuid()) @db.Uuid
+  announcementId    String                 @db.Uuid
+  itemIndex         Int
+  title             String
+  description       String?                @db.Text
+  searchContext     String                 @db.Text
+  embedding         Unsupported("vector(1536)")?
+  price             Decimal?               @db.Decimal(15, 2)
+  kind              AnnouncementKind?
+  shortSummary      String?                @db.Text
+  llmEstimatedValue Decimal?               @db.Decimal(15, 2)
+  status            AnnouncementItemStatus @default(PENDING)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  announcement      Announcement           @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  clientMatches     ClientMatch[]
 
   @@unique([announcementId, itemIndex])
   @@index([announcementId])

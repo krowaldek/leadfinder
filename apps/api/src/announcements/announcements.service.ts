@@ -39,6 +39,11 @@ export class AnnouncementsService {
           rawData: true,
           createdAt: true,
           updatedAt: true,
+          items: {
+            select: { id: true, shortSummary: true, llmEstimatedValue: true, kind: true },
+            orderBy: { itemIndex: "asc" },
+            take: 5,
+          },
         },
       }),
       this.prisma.announcement.count({ where }),
@@ -49,6 +54,10 @@ export class AnnouncementsService {
         ...a,
         valueMin: a.valueMin != null ? a.valueMin.toString() : null,
         valueMax: a.valueMax != null ? a.valueMax.toString() : null,
+        items: a.items.map((item) => ({
+          ...item,
+          llmEstimatedValue: item.llmEstimatedValue != null ? item.llmEstimatedValue.toString() : null,
+        })),
       })),
       meta: {
         total,
@@ -75,8 +84,23 @@ export class AnnouncementsService {
         publishedAt: true,
         deadlineAt: true,
         rawData: true,
+        detailedReport: true,
         createdAt: true,
         updatedAt: true,
+        items: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            price: true,
+            kind: true,
+            shortSummary: true,
+            llmEstimatedValue: true,
+            status: true,
+            itemIndex: true,
+          },
+          orderBy: { itemIndex: "asc" },
+        },
       },
     });
 
@@ -86,6 +110,11 @@ export class AnnouncementsService {
       ...a,
       valueMin: a.valueMin != null ? a.valueMin.toString() : null,
       valueMax: a.valueMax != null ? a.valueMax.toString() : null,
+      items: a.items.map((item) => ({
+        ...item,
+        price: item.price != null ? item.price.toString() : null,
+        llmEstimatedValue: item.llmEstimatedValue != null ? item.llmEstimatedValue.toString() : null,
+      })),
     };
   }
 }

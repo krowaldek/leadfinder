@@ -79,6 +79,8 @@ export const clientMatchItemSchema = z.object({
   description: z.string().nullable(),
   price: z.string().nullable(),
   kind: z.string().nullable().optional(),
+  shortSummary: z.string().nullable().optional(),
+  llmEstimatedValue: z.string().nullable().optional(),
   searchContext: z.string().optional(),
   announcement: clientMatchAnnouncementSchema,
 });
