@@ -3,14 +3,16 @@ import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search, Info } from "lucide-react";
 import { DataTable, type ColumnDef } from "../../../components/data-table";
 import type { ClientMatchResponse } from "@leadfinder/contracts";
 import { fetchClients, fetchClientMatches, updateMatchStatus } from "./clients-api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { MatchDetailSheet } from "@/components/MatchDetailSheet";
 
 // ── Labels ───────────────────────────────────────────────────────────────────
 
@@ -86,7 +88,9 @@ export function ClientMatchesPage() {
   const [sortCol, setSortCol] = useState<SortCol>("deadlineAt");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [hideDismissed, setHideDismissed] = useState(true);
+  const [hideExpired, setHideExpired] = useState(true);
   const [search, setSearch] = useState("");
+  const [detailMatch, setDetailMatch] = useState<ClientMatchResponse | null>(null);
   const queryClient = useQueryClient();
 
   const clientsQuery = useQuery({
@@ -124,6 +128,7 @@ export function ClientMatchesPage() {
   }
 
   const allMatches = matchesQuery.data?.data ?? [];
+  const clientProfileSummary = matchesQuery.data?.clientProfileSummary;
   const total = matchesQuery.data?.meta.total ?? 0;
   const shortlisted = allMatches.filter((m) => m.status === "SHORTLISTED").length;
   const dismissed = allMatches.filter((m) => m.status === "DISMISSED").length;
@@ -132,6 +137,15 @@ export function ClientMatchesPage() {
     let rows = hideDismissed
       ? allMatches.filter((m) => m.status !== "DISMISSED")
       : allMatches;
+
+    if (hideExpired) {
+      const now = new Date();
+      rows = rows.filter((m) => {
+        const d = m.announcementItem.announcement.deadlineAt;
+        if (!d) return true; // brak terminu — zostaw
+        return new Date(d) > now;
+      });
+    }
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -170,7 +184,7 @@ export function ClientMatchesPage() {
 
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [allMatches, hideDismissed, search, sortCol, sortDir]);
+  }, [allMatches, hideDismissed, hideExpired, search, sortCol, sortDir]);
 
   // ── Columns ─────────────────────────────────────────────────────────────────
 
@@ -280,6 +294,15 @@ export function ClientMatchesPage() {
               <option key={v} value={v}>{l}</option>
             ))}
           </select>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            title="Szczegóły dopasowania"
+            onClick={() => setDetailMatch(row)}
+          >
+            <Info className="size-3.5" />
+          </Button>
           <a
             href={row.announcementItem.announcement.url}
             target="_blank"
@@ -342,6 +365,16 @@ export function ClientMatchesPage() {
           />
           Ukryj odrzucone
         </label>
+
+        <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={hideExpired}
+            onChange={(e) => setHideExpired(e.target.checked)}
+            className="size-4 accent-primary"
+          />
+          Ukryj po terminie
+        </label>
       </div>
 
       {/* Stats */}
@@ -394,6 +427,13 @@ export function ClientMatchesPage() {
                     : "Ten klient nie ma jeszcze żadnych dopasowań.",
                 }
         }
+      />
+
+      <MatchDetailSheet
+        match={detailMatch}
+        clientProfileSummary={clientProfileSummary}
+        open={!!detailMatch}
+        onOpenChange={(open) => { if (!open) setDetailMatch(null); }}
       />
     </div>
   );

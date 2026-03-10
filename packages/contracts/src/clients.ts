@@ -79,6 +79,7 @@ export const clientMatchItemSchema = z.object({
   description: z.string().nullable(),
   price: z.string().nullable(),
   kind: z.string().nullable().optional(),
+  searchContext: z.string().optional(),
   announcement: clientMatchAnnouncementSchema,
 });
 
@@ -124,6 +125,7 @@ export const clientsListResponseSchema = z.object({
 export type ClientsListResponse = z.infer<typeof clientsListResponseSchema>;
 
 export const clientMatchesResponseSchema = z.object({
+  clientProfileSummary: z.string().optional(),
   data: z.array(clientMatchResponseSchema),
   meta: z.object({
     total: z.number(),

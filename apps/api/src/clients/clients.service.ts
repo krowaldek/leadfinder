@@ -119,6 +119,7 @@ export class ClientsService {
     });
 
     return {
+      clientProfileSummary: client.profileSummary,
       data: matches.map((m) => ({
         id: m.id,
         clientId: m.clientId,
@@ -131,6 +132,7 @@ export class ClientsService {
           description: m.announcementItem.description,
           price: m.announcementItem.price?.toString() ?? null,
           kind: m.announcementItem.kind ?? null,
+          searchContext: m.announcementItem.searchContext,
           announcement: {
             id: m.announcementItem.announcement.id,
             title: m.announcementItem.announcement.title,
