@@ -72,18 +72,20 @@ export type AnnouncementUpsertData = {
 
 /**
  * Maps a BK detail response to the Announcement upsert payload.
- * @param listId  – the ID from the search list (used in public URL and as externalId)
- * @param detail  – the advertisement object from /api/announcements/{listId}
+ * @param listId      – the ID from the search list (used in public URL and as externalId)
+ * @param detail      – the advertisement object from /api/announcements/{listId}
+ * @param listContent – optional `content` field from the search list item (human-readable description)
  */
 export function mapBkDetailToUpsertData(
   listId: string,
   detail: BkAnnouncementDetail,
+  listContent?: string | null,
 ): AnnouncementUpsertData {
   return {
     sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
     externalId: listId,
     title: detail.title,
-    description: null, // content is only in list items; detail has structured fields
+    description: listContent?.trim() || null,
     url: `${BK_PUBLIC_BASE}/ogloszenia/${listId}`,
     status: AnnouncementStatus.OPEN, // fetched with status[0]=PUBLISHED filter
     valueMin: null,

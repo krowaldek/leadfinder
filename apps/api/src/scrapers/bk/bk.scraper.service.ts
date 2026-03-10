@@ -90,7 +90,7 @@ export class BkScraperService {
   // Step 2 – fetch detail and upsert into announcements table
   // ---------------------------------------------------------------------------
 
-  async fetchAndSaveDetails(id: string): Promise<void> {
+  async fetchAndSaveDetails(id: string, listContent?: string | null): Promise<void> {
     if (!this.apiBaseUrl) {
       this.logger.warn("BK scraper is disabled: missing BK_API_BASE_URL.");
       return;
@@ -107,7 +107,7 @@ export class BkScraperService {
         return;
       }
 
-      const upsertData = mapBkDetailToUpsertData(id, detail);
+      const upsertData = mapBkDetailToUpsertData(id, detail, listContent);
 
       const saved = await this.prisma.announcement.upsert({
         where: {
@@ -189,8 +189,18 @@ export class BkScraperService {
       return;
     }
 
+    // Zbuduj mapę id → content z danych listy (opis ogłoszenia dostępny tylko w liście, nie w detalu)
+    const contentByExternalId = new Map<string, string>();
+    for (const item of listItems) {
+      if (item.content?.trim()) {
+        contentByExternalId.set(String(item.id), item.content.trim());
+      }
+    }
+
     const limit = pLimit(CONCURRENCY_LIMIT);
-    const tasks = newIds.map((id) => limit(() => this.fetchAndSaveDetails(id)));
+    const tasks = newIds.map((id) =>
+      limit(() => this.fetchAndSaveDetails(id, contentByExternalId.get(id))),
+    );
     const results = await Promise.allSettled(tasks);
 
     const failed = results.filter((r) => r.status === "rejected").length;
