@@ -71,6 +71,7 @@ export const clientMatchAnnouncementSchema = z.object({
   deadlineAt: z.string().nullable(),
   valueMin: z.string().nullable(),
   valueMax: z.string().nullable(),
+  detailedReport: z.string().nullable().optional(),
 });
 
 export const clientMatchItemSchema = z.object({

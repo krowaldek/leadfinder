@@ -39,6 +39,7 @@ export class AnnouncementsService {
           rawData: true,
           createdAt: true,
           updatedAt: true,
+          detailedReport: true,
           items: {
             select: { id: true, shortSummary: true, llmEstimatedValue: true, kind: true },
             orderBy: { itemIndex: "asc" },

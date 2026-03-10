@@ -3,7 +3,7 @@ import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search, Info } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search, Info, FileText } from "lucide-react";
 import { DataTable, type ColumnDef } from "../../../components/data-table";
 import type { ClientMatchResponse } from "@leadfinder/contracts";
 import { fetchClients, fetchClientMatches, updateMatchStatus } from "./clients-api";
@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MatchDetailSheet } from "@/components/MatchDetailSheet";
+import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
+import type { Announcement } from "@leadfinder/contracts";
 
 // ── Labels ───────────────────────────────────────────────────────────────────
 
@@ -91,6 +93,7 @@ export function ClientMatchesPage() {
   const [hideExpired, setHideExpired] = useState(true);
   const [search, setSearch] = useState("");
   const [detailMatch, setDetailMatch] = useState<ClientMatchResponse | null>(null);
+  const [reportTarget, setReportTarget] = useState<Announcement | null>(null);
   const queryClient = useQueryClient();
 
   const clientsQuery = useQuery({
@@ -194,18 +197,25 @@ export function ClientMatchesPage() {
       header: (
         <SortHeader col="title" label="Ogłoszenie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
       ),
-      cell: ({ row }) => (
-        <div className="max-w-sm">
-          <p className="line-clamp-2 text-sm font-medium leading-snug">
-            {row.announcementItem.title}
-          </p>
-          {row.announcementItem.description && (
-            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-              {row.announcementItem.description}
+      cell: ({ row }) => {
+        const item = row.announcementItem as { title: string; description?: string | null; shortSummary?: string | null };
+        return (
+          <div className="max-w-sm">
+            <p className="line-clamp-2 text-sm font-medium leading-snug">
+              {item.title}
             </p>
-          )}
-        </div>
-      ),
+            {item.shortSummary ? (
+              <p className="mt-0.5 line-clamp-1 text-xs text-primary/70 font-medium">
+                {item.shortSummary}
+              </p>
+            ) : item.description ? (
+              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                {item.description}
+              </p>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       id: "kind",
@@ -319,6 +329,18 @@ export function ClientMatchesPage() {
             onClick={() => setDetailMatch(row)}
           >
             <Info className="size-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            title="Raport analityczny"
+            onClick={() => {
+              const ann = row.announcementItem.announcement;
+              setReportTarget({ id: ann.id, title: ann.title, detailedReport: ann.detailedReport ?? null } as unknown as Announcement);
+            }}
+          >
+            <FileText className="size-3.5" />
           </Button>
           <a
             href={row.announcementItem.announcement.url}
@@ -451,6 +473,12 @@ export function ClientMatchesPage() {
         clientProfileSummary={clientProfileSummary}
         open={!!detailMatch}
         onOpenChange={(open) => { if (!open) setDetailMatch(null); }}
+      />
+
+      <AnnouncementReportDialog
+        announcement={reportTarget}
+        open={!!reportTarget}
+        onClose={() => setReportTarget(null)}
       />
     </div>
   );

@@ -110,6 +110,7 @@ export class ClientsService {
                 deadlineAt: true,
                 valueMin: true,
                 valueMax: true,
+                detailedReport: true,
               },
             },
           },
@@ -141,6 +142,7 @@ export class ClientsService {
             url: m.announcementItem.announcement.url,
             sourceSystem: m.announcementItem.announcement.sourceSystem,
             externalId: m.announcementItem.announcement.externalId,
+            detailedReport: m.announcementItem.announcement.detailedReport ?? null,
             publishedAt:
               m.announcementItem.announcement.publishedAt?.toISOString() ?? null,
             deadlineAt:

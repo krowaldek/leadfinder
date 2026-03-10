@@ -3,14 +3,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileText, RefreshCw, Copy, Check } from "lucide-react";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import type { Announcement } from "@leadfinder/contracts";
 import { generateAnnouncementReport } from "@/features/announcements/announcements-api";
@@ -36,8 +35,8 @@ export function AnnouncementReportDialog({
     mutationFn: () => generateAnnouncementReport(announcement!.id),
     onSuccess: (data) => {
       setLocalReport(data.data.detailedReport);
-      // odśwież cache listy ogłoszeń żeby detailedReport był aktualny
       void queryClient.invalidateQueries({ queryKey: ["announcements"] });
+      void queryClient.invalidateQueries({ queryKey: ["client-matches"] });
       toast.success("Raport został wygenerowany");
     },
     onError: () => toast.error("Nie udało się wygenerować raportu"),
@@ -59,27 +58,24 @@ export function AnnouncementReportDialog({
   }
 
   return (
-    <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl"
-      >
-        <SheetHeader className="px-6 pt-6 pb-4">
-          <SheetTitle className="flex items-center gap-2 text-base">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="flex max-h-[90vh] w-full max-w-6xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
+          <DialogTitle className="flex items-center gap-2 text-base">
             <FileText className="size-4 shrink-0 text-muted-foreground" />
             Raport analityczny
-          </SheetTitle>
+          </DialogTitle>
           {announcement && (
-            <SheetDescription className="line-clamp-2 text-sm">
+            <DialogDescription className="text-sm">
               {announcement.title}
-            </SheetDescription>
+            </DialogDescription>
           )}
-        </SheetHeader>
+        </DialogHeader>
 
-        <Separator />
+        <Separator className="shrink-0" />
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-6 py-3">
+        <div className="flex shrink-0 items-center gap-2 px-6 py-3">
           <Button
             size="sm"
             onClick={() => generateMutation.mutate()}
@@ -126,11 +122,11 @@ export function AnnouncementReportDialog({
           )}
         </div>
 
-        <Separator />
+        <Separator className="shrink-0" />
 
         {/* Treść raportu */}
-        <ScrollArea className="flex-1">
-          <div className="px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="px-6 py-5">
             {generateMutation.isPending ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                 <RefreshCw className="size-8 animate-spin text-muted-foreground/40" />
@@ -156,9 +152,9 @@ export function AnnouncementReportDialog({
               </div>
             )}
           </div>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -172,6 +168,13 @@ function ReportContent({ content }: { content: string }) {
   return (
     <div className="space-y-1 text-sm leading-relaxed">
       {lines.map((line, i) => {
+        if (line.startsWith("# ") && !line.startsWith("## ")) {
+          return (
+            <h1 key={i} className="mt-2 mb-3 text-lg font-bold first:mt-0">
+              {line.slice(2)}
+            </h1>
+          );
+        }
         if (line.startsWith("## ")) {
           return (
             <h2 key={i} className="mt-5 mb-1.5 text-base font-semibold first:mt-0">
