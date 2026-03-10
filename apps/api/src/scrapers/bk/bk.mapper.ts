@@ -28,6 +28,17 @@ export interface BkSearchResponse {
   };
 }
 
+/** Pojedynczy załącznik z BK API */
+export interface BkAttachment {
+  id: number;
+  name: string;
+  file: {
+    id: number;
+    uri: string;   // np. "/api/files/2383677"
+    name: string;
+  };
+}
+
 /** Detail item inside /api/announcements/{id} */
 export interface BkAnnouncementDetail {
   id: number;
@@ -41,6 +52,7 @@ export interface BkAnnouncementDetail {
   modified_at?: string;
   partial_offer_allowed?: boolean;
   contact_persons?: unknown[];
+  attachments?: BkAttachment[];
   [key: string]: unknown;
 }
 

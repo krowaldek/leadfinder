@@ -138,6 +138,12 @@ export class EmbeddingService {
       this.logger.log(
         `Embedded item ${itemId} → kind=${kind} (${vector.length} dims)`,
       );
+
+      // 5. Jeśli item nie był jeszcze wzbogacony i ogłoszenie ma załączniki PDF
+      //    — kolejkuj ENRICH_ITEM (zostanie uruchomiony asynchronicznie po embedowaniu)
+      if (!item.searchContext.includes("| ZAŁĄCZNIKI:")) {
+        await this.maybeEnqueueEnrichment(itemId);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to embed item ${itemId}: ${msg}`);
@@ -230,5 +236,44 @@ export class EmbeddingService {
     }
 
     return matched ?? "INNE";
+  }
+
+  /**
+   * Sprawdza czy ogłoszenie powiązane z itemem ma załączniki PDF.
+   * Jeśli tak — kolejkuje job ENRICH_ITEM.
+   */
+  private async maybeEnqueueEnrichment(itemId: string): Promise<void> {
+    const item = await this.prisma.announcementItem.findUnique({
+      where: { id: itemId },
+      select: {
+        announcement: {
+          select: { rawData: true },
+        },
+      },
+    });
+
+    const rawData = item?.announcement?.rawData as Record<string, unknown> | null;
+    const attachments = Array.isArray(rawData?.attachments)
+      ? (rawData.attachments as Array<{ name?: string; file?: { name?: string } }>)
+      : [];
+
+    const hasPdf = attachments.some((a) =>
+      (a.name ?? a.file?.name ?? "").toLowerCase().endsWith(".pdf"),
+    );
+
+    if (!hasPdf) return;
+
+    await this.embeddingQueue.add(
+      EmbeddingJob.ENRICH_ITEM,
+      { itemId },
+      {
+        attempts: 2,
+        backoff: { type: "exponential", delay: 10_000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 50 },
+      },
+    );
+
+    this.logger.debug(`Enqueued ENRICH_ITEM for item ${itemId}`);
   }
 }

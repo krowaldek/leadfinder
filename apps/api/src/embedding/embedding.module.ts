@@ -3,6 +3,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { DatabaseModule } from "../database/database.module.js";
 import { EmbeddingService } from "./embedding.service.js";
 import { EmbeddingProcessor } from "./embedding.processor.js";
+import { AttachmentEnrichmentService } from "./attachment-enrichment.service.js";
 import { EMBEDDING_QUEUE } from "./embedding-queue.constants.js";
 
 @Module({
@@ -10,7 +11,7 @@ import { EMBEDDING_QUEUE } from "./embedding-queue.constants.js";
     DatabaseModule,
     BullModule.registerQueue({ name: EMBEDDING_QUEUE }),
   ],
-  providers: [EmbeddingService, EmbeddingProcessor],
+  providers: [EmbeddingService, EmbeddingProcessor, AttachmentEnrichmentService],
   exports: [EmbeddingService, BullModule],
 })
 export class EmbeddingModule {}

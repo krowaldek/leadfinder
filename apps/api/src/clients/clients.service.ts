@@ -224,8 +224,12 @@ export class ClientsService {
       negativeKeywords: data.negativeKeywords ?? existing.negativeKeywords,
     };
 
-    const basicSummary = this.buildProfileSummary(merged);
-    const profileSummary = await this.enrichProfileForEmbedding(merged, basicSummary);
+    const mergedForProfile = { ...merged, geographicDetails: merged.geographicDetails ?? undefined };
+    const basicSummary = this.buildProfileSummary(mergedForProfile);
+    const profileSummary = await this.enrichProfileForEmbedding(
+      mergedForProfile,
+      basicSummary,
+    );
 
     // Nullify the pgvector embedding via raw SQL (Unsupported type, not settable via Prisma client)
     await this.prisma.$executeRaw`
