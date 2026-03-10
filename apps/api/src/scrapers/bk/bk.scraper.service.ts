@@ -49,7 +49,8 @@ export class BkScraperService {
       return { newIds: [], listItems: [] };
     }
 
-    // Pobieramy wszystkie opublikowane ogłoszenia bez filtra daty — pełna paginacja
+    // Pełna paginacja — tylko ogłoszenia z aktywnym terminem składania ofert
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const PAGE_SIZE = 100;
     const allItems: BkListItem[] = [];
     let page = 1;
@@ -59,6 +60,7 @@ export class BkScraperService {
       const url =
         `${this.apiBaseUrl}/announcements/search` +
         `?page=${page}&limit=${PAGE_SIZE}&sort=default` +
+        `&submissionDeadlineRange%5Bfrom%5D=${today}` +
         `&status%5B0%5D=PUBLISHED`;
 
       this.logger.log(`Fetching BK list page ${page}/${totalPages}: ${url}`);
