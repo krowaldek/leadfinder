@@ -21,6 +21,7 @@
     "normalization:backfill": "node --import tsx src/normalization/backfill.ts",
     "clients:backfill": "node --import tsx src/clients/backfill.ts",
     "clients:backfill:after-reembed": "node --import tsx src/clients/backfill-after-reembed.ts",
+    "db:export:data": "node scripts/export-db.mjs",
     "items:reset-raw": "node --import tsx src/embedding/reset-to-raw.ts",
     "items:reembed": "node --import tsx src/embedding/reembed.ts",
     "items:reembed:progress": "node --import tsx src/embedding/reembed-progress.ts"
