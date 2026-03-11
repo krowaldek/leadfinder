@@ -38,8 +38,10 @@ import {
   useEmbeddingLogs,
   useReportLogs,
   useLogsStats,
+  useReembedProgress,
   type JobLog,
   type JobLogStatus,
+  type ReembedProgress,
   type TypeStats,
 } from "./logs-api";
 
@@ -150,6 +152,145 @@ function StatsCard({
               <Timer className="size-3" /> Śr. czas
             </span>
             <span className="font-mono">{formatDuration(stats?.avgDurationMs)}</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function percent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function ReembedProgressCard({
+  progress,
+  isLoading,
+}: {
+  progress: ReembedProgress | undefined;
+  isLoading: boolean;
+}) {
+  const summary = progress?.summary;
+  const queue = progress?.queue;
+  const coverage = summary?.reembedCoverage ?? 0;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <Activity className="size-4 text-sky-500" />
+          Migracja report-first
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">Pokrycie nowych embeddingów</span>
+            <span className="font-mono text-muted-foreground">
+              {isLoading || !summary ? "—" : percent(coverage)}
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-sky-500 transition-all"
+              style={{ width: `${Math.max(0, Math.min(coverage * 100, 100))}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {isLoading || !summary
+              ? "Ładowanie stanu migracji…"
+              : `${summary.embeddedWithReport.toLocaleString("pl-PL")} z ${summary.embeddedItems.toLocaleString("pl-PL")} osadzonych pozycji ma już raport itemu.`}
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-md bg-sky-500/10 px-3 py-2">
+            <p className="text-xs text-muted-foreground">Nowe embeddingi</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {summary?.embeddedWithReport?.toLocaleString("pl-PL") ?? "—"}
+            </p>
+          </div>
+          <div className="rounded-md bg-amber-500/10 px-3 py-2">
+            <p className="text-xs text-muted-foreground">Legacy embeddingi</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {summary?.legacyEmbeddedItems?.toLocaleString("pl-PL") ?? "—"}
+            </p>
+          </div>
+          <div className="rounded-md bg-blue-500/10 px-3 py-2">
+            <p className="text-xs text-muted-foreground">W kolejce</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {queue ? (queue.waiting + queue.active).toLocaleString("pl-PL") : "—"}
+            </p>
+          </div>
+          <div className="rounded-md bg-emerald-500/10 px-3 py-2">
+            <p className="text-xs text-muted-foreground">Raporty itemów</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {summary?.itemsWithReport?.toLocaleString("pl-PL") ?? "—"}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Źródło</TableHead>
+                  <TableHead className="text-right">Pokrycie</TableHead>
+                  <TableHead className="text-right">Legacy</TableHead>
+                  <TableHead className="text-right">Pending</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin inline mr-2" />
+                      Ładowanie…
+                    </TableCell>
+                  </TableRow>
+                ) : !progress || progress.bySource.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                      Brak danych migracji
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  progress.bySource.map((row) => (
+                    <TableRow key={row.sourceSystem}>
+                      <TableCell className="text-xs font-medium">{row.sourceSystem}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{percent(row.reembedCoverage)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{row.legacyEmbeddedItems}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{row.pendingItems}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="rounded-md border p-3 space-y-2 text-xs">
+            <p className="font-medium text-sm">Stan kolejki embedding</p>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Waiting</span>
+              <span className="font-mono">{queue?.waiting ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Active</span>
+              <span className="font-mono">{queue?.active ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Completed</span>
+              <span className="font-mono">{queue?.completed ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Failed</span>
+              <span className="font-mono">{queue?.failed ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Delayed</span>
+              <span className="font-mono">{queue?.delayed ?? "—"}</span>
+            </div>
           </div>
         </div>
       </CardContent>
@@ -375,36 +516,43 @@ function ReportLogsTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-[180px]">Czas startu</TableHead>
+            <TableHead className="w-[140px]">Job</TableHead>
             <TableHead className="w-[100px]">Status</TableHead>
             <TableHead className="w-[90px]">Czas trwania</TableHead>
-            <TableHead>Ogłoszenie</TableHead>
+            <TableHead>Encja</TableHead>
             <TableHead className="w-[100px]">Dł. raportu</TableHead>
             <TableHead className="w-[80px]">Pozycje</TableHead>
             <TableHead className="w-[80px]">Załączniki</TableHead>
+            <TableHead>Detale</TableHead>
             <TableHead className="max-w-[300px]">Błąd</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin inline mr-2" />
                 Ładowanie…
               </TableCell>
             </TableRow>
           ) : logs.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                 Brak logów raportów
               </TableCell>
             </TableRow>
           ) : (
             logs.map((log) => {
               const result = log.result as Record<string, unknown> | null;
+              const summary =
+                typeof result?.summary === "string" ? result.summary : null;
               return (
                 <TableRow key={log.id}>
                   <TableCell className="font-mono text-xs whitespace-nowrap">
                     {formatDate(log.startedAt)}
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{log.jobName}</code>
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={log.status} />
@@ -413,10 +561,10 @@ function ReportLogsTable({
                     {formatDuration(log.durationMs)}
                   </TableCell>
                   <TableCell className="text-xs max-w-[300px]">
-                    {result?.title ? (
+                    {log.entityTitle || result?.title ? (
                       <div className="space-y-0.5">
-                        <p className="truncate font-medium" title={String(result.title)}>
-                          {String(result.title)}
+                        <p className="truncate font-medium" title={String(log.entityTitle ?? result?.title)}>
+                          {String(log.entityTitle ?? result?.title)}
                         </p>
                         {log.entityId && (
                           <p className="font-mono text-[10px] text-muted-foreground truncate">
@@ -444,6 +592,35 @@ function ReportLogsTable({
                     {result?.attachmentsProcessed != null
                       ? String(result.attachmentsProcessed)
                       : "—"}
+                  </TableCell>
+                  <TableCell className="text-xs max-w-[360px]">
+                    <div className="space-y-1">
+                      {result?.kind != null && (
+                        <Badge variant="outline" className="text-[10px] font-mono">
+                          {String(result.kind)}
+                        </Badge>
+                      )}
+                      {result?.estimatedValue != null && (
+                        <p className="text-muted-foreground font-mono">
+                          est.: {Number(result.estimatedValue).toLocaleString()} PLN
+                        </p>
+                      )}
+                      {result?.queuedEmbeddings != null && (
+                        <p className="text-muted-foreground font-mono">
+                          queued embeddings: {String(result.queuedEmbeddings)}
+                        </p>
+                      )}
+                      {result?.queuedAnnouncementReport != null && (
+                        <p className="text-muted-foreground font-mono">
+                          queued ann. report: {String(result.queuedAnnouncementReport)}
+                        </p>
+                      )}
+                      {summary ? (
+                        <p className="line-clamp-3" title={summary}>{summary}</p>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="max-w-[300px]">
                     {log.error ? (
@@ -566,6 +743,7 @@ function FilterBar({
 
 export function LogsPage() {
   const { data: stats, isLoading: statsLoading } = useLogsStats();
+  const { data: reembedProgress, isLoading: reembedLoading } = useReembedProgress();
 
   // Scraper state
   const [scraperPage, setScraperPage] = useState(1);
@@ -622,6 +800,11 @@ export function LogsPage() {
           stats={statsLoading ? undefined : stats?.report}
         />
       </div>
+
+      <ReembedProgressCard
+        progress={reembedProgress}
+        isLoading={reembedLoading}
+      />
 
       {/* Tabs */}
       <Tabs defaultValue="scraper" className="space-y-4">

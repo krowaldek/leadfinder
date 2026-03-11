@@ -98,6 +98,10 @@ export class NormalizationService {
       this.prisma.announcementItem.deleteMany({
         where: { announcementId },
       }),
+      this.prisma.announcement.update({
+        where: { id: announcementId },
+        data: { detailedReport: null },
+      }),
       this.prisma.announcementItem.createMany({
         data: itemsToCreate.map((item, index) => ({
           announcementId,
@@ -115,7 +119,7 @@ export class NormalizationService {
       `Saved ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
     );
 
-    // Pobierz UUID zapisanych itemów i wrzuć do kolejki embedding
+    // Pobierz UUID zapisanych itemów i wrzuć do kolejki raportów per item
     const savedItems = await this.prisma.announcementItem.findMany({
       where: { announcementId },
       select: { id: true },
@@ -124,9 +128,10 @@ export class NormalizationService {
 
     for (const item of savedItems) {
       await this.embeddingQueue.add(
-        EmbeddingJob.EMBED_ITEM,
+        EmbeddingJob.REPORT_ITEM,
         { itemId: item.id },
         {
+          jobId: `item-report-${item.id}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 5_000 },
           removeOnComplete: { count: 100 },
@@ -136,7 +141,7 @@ export class NormalizationService {
     }
 
     this.logger.log(
-      `Enqueued ${savedItems.length} embedding job(s) for announcement ${announcementId}`,
+      `Enqueued ${savedItems.length} item report job(s) for announcement ${announcementId}`,
     );
   }
 

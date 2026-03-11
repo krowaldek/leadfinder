@@ -50,4 +50,9 @@ export class LogsController {
   async stats() {
     return this.logsService.getStats();
   }
+
+  @Get("reembed-progress")
+  async reembedProgress() {
+    return this.logsService.getReembedProgress();
+  }
 }

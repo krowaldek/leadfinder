@@ -18,7 +18,12 @@
     "prisma:seed": "node --import tsx prisma/seed.ts",
     "scraper:bk": "node --import tsx src/scrapers/bk/run.ts",
     "normalization:test": "node --import tsx src/normalization/run.ts",
-    "normalization:backfill": "node --import tsx src/normalization/backfill.ts"
+    "normalization:backfill": "node --import tsx src/normalization/backfill.ts",
+    "clients:backfill": "node --import tsx src/clients/backfill.ts",
+    "clients:backfill:after-reembed": "node --import tsx src/clients/backfill-after-reembed.ts",
+    "items:reset-raw": "node --import tsx src/embedding/reset-to-raw.ts",
+    "items:reembed": "node --import tsx src/embedding/reembed.ts",
+    "items:reembed:progress": "node --import tsx src/embedding/reembed-progress.ts"
   },
   "dependencies": {
     "@google/genai": "^1.44.0",

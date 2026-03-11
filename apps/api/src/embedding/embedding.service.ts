@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  Inject,
-  Logger,
-  NotFoundException,
-} from "@nestjs/common";
+import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
@@ -23,8 +18,8 @@ import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
 const MAX_DIRECT_EMBEDDING_ATTACHMENTS = 2;
 const MAX_DIRECT_EMBEDDING_PDF_PAGES = 6;
 const ATTACHMENT_VECTOR_WEIGHT = 0.25;
-
-// ── Klasyfikacja rodzaju ogłoszenia ─────────────────────────────────────────
+const MAX_EMBEDDING_REPORT_CHARS = 4_500;
+const MAX_EMBEDDING_CONTEXT_CHARS = 1_200;
 
 export const ANNOUNCEMENT_KINDS = [
   "DOSTAWA",
@@ -64,7 +59,23 @@ INNE – nie pasuje do żadnej z powyższych kategorii
 
 Odpowiedz WYŁĄCZNIE jedną z tych wartości: DOSTAWA, USLUGA, ROBOTY_BUDOWLANE, SZKOLENIE, USLUGA_IT, USLUGA_BADAWCZO_ROZWOJOWA, DORADZTWO, INNE`;
 
-// ── Serwis ───────────────────────────────────────────────────────────────────
+const ITEM_ANALYSIS_PROMPT = `Jesteś analitykiem polskich zapytań ofertowych. Analizujesz jedną część zamówienia albo jedno ogólne zapytanie.
+
+Zwróć WYŁĄCZNIE poprawny JSON bez dodatkowego tekstu, w formacie:
+{
+  "kind": "DOSTAWA",
+  "summary": "Dostawa: laptopy, monitory, akcesoria",
+  "detailedReport": "## Zakres\n...\n\n## Wymagania\n...\n\n## Terminy i warunki\n...\n\n## Ryzyka\n...",
+  "estimatedValue": 150000
+}
+
+Zasady:
+- kind musi być jedną z wartości: DOSTAWA, USLUGA, ROBOTY_BUDOWLANE, SZKOLENIE, USLUGA_IT, USLUGA_BADAWCZO_ROZWOJOWA, DORADZTWO, INNE
+- summary: maksymalnie 18 słów, zaczynaj od kategorii po polsku
+- detailedReport: zwięzły raport Markdown o TEJ części, z sekcjami: ## Zakres, ## Wymagania, ## Terminy i warunki, ## Ryzyka
+- estimatedValue: liczba PLN netto albo null
+- nie powielaj formalności urzędowych
+- skup się na meritum i wymaganiach wykonania`;
 
 @Injectable()
 export class EmbeddingService {
@@ -79,23 +90,151 @@ export class EmbeddingService {
     private readonly embeddingQueue: Queue,
   ) {}
 
-  /**
-   * Klasyfikuje rodzaj ogłoszenia, generuje embedding i zapisuje obydwa w DB.
-   *
-   * Flow:
-   *  1. Pobierz item z DB (jeśli kind już ustawiony — reużyj, nie klasyfikuj ponownie).
-   *  2. Klasyfikuj kind przez gpt-4o-mini (lub OPENAI_CHAT_MODEL).
-   *  3. Zbuduj augmented text: "RODZAJ: <label> | <searchContext>" dla lepszego semantic search.
-  *  4. Wygeneruj wektor z augmented text przez skonfigurowany provider embeddings.
-   *  5. Zapisz embedding + kind + status=EMBEDDED przez raw SQL (pgvector).
-   */
-  async generateItemEmbedding(itemId: string): Promise<void> {
+  async generateItemReport(itemId: string): Promise<{
+    itemId: string;
+    announcementId: string;
+    kind: AnnouncementKind;
+    summary: string;
+    detailedReport: string;
+    estimatedValue: number | null;
+  }> {
     const item = await this.prisma.announcementItem.findUnique({
       where: { id: itemId },
       select: {
         id: true,
+        announcementId: true,
+        title: true,
+        description: true,
         searchContext: true,
-        status: true,
+        kind: true,
+        shortSummary: true,
+        detailedReport: true,
+        llmEstimatedValue: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`AnnouncementItem not found: ${itemId}`);
+    }
+
+    if (item.kind && item.shortSummary && item.detailedReport) {
+      return {
+        itemId: item.id,
+        announcementId: item.announcementId,
+        kind: item.kind as AnnouncementKind,
+        summary: item.shortSummary,
+        detailedReport: item.detailedReport,
+        estimatedValue: item.llmEstimatedValue ? Number(item.llmEstimatedValue) : null,
+      };
+    }
+
+    const apiKey = this.config.get<string>("OPENAI_API_KEY");
+    if (!apiKey) {
+      throw new Error(
+        "OPENAI_API_KEY is not set — cannot generate item reports before embedding",
+      );
+    }
+
+    const chatModel =
+      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const analysis = await this.analyzeItem(
+      {
+        title: item.title,
+        description: item.description,
+        searchContext: item.searchContext,
+      },
+      apiKey,
+      chatModel,
+    );
+
+    await this.prisma.announcementItem.update({
+      where: { id: itemId },
+      data: {
+        kind: analysis.kind,
+        shortSummary: analysis.summary,
+        detailedReport: analysis.detailedReport,
+        llmEstimatedValue:
+          analysis.estimatedValue != null ? String(analysis.estimatedValue) : null,
+        status: "PENDING",
+      },
+    });
+
+    this.logger.log(`Generated item report for ${itemId} → kind=${analysis.kind}`);
+
+    return {
+      itemId: item.id,
+      announcementId: item.announcementId,
+      kind: analysis.kind,
+      summary: analysis.summary,
+      detailedReport: analysis.detailedReport,
+      estimatedValue: analysis.estimatedValue,
+    };
+  }
+
+  async queueAnnouncementReportIfReady(announcementId: string): Promise<boolean> {
+    const [totalItems, readyItems] = await Promise.all([
+      this.prisma.announcementItem.count({ where: { announcementId } }),
+      this.prisma.announcementItem.count({
+        where: {
+          announcementId,
+          kind: { not: null },
+          shortSummary: { not: null },
+          detailedReport: { not: null },
+        },
+      }),
+    ]);
+
+    if (totalItems === 0 || totalItems !== readyItems) {
+      return false;
+    }
+
+    await this.embeddingQueue.add(
+      EmbeddingJob.REPORT_ANNOUNCEMENT,
+      { announcementId },
+      {
+        jobId: `announcement-report-${announcementId}`,
+        attempts: 2,
+        backoff: { type: "exponential", delay: 5_000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 50 },
+      },
+    );
+
+    return true;
+  }
+
+  async enqueueEmbeddingJobsForAnnouncement(announcementId: string): Promise<number> {
+    const items = await this.prisma.announcementItem.findMany({
+      where: { announcementId },
+      select: { id: true },
+      orderBy: { itemIndex: "asc" },
+    });
+
+    for (const item of items) {
+      await this.embeddingQueue.add(
+        EmbeddingJob.EMBED_ITEM,
+        { itemId: item.id },
+        {
+          jobId: `item-embed-${item.id}`,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 5_000 },
+          removeOnComplete: { count: 100 },
+          removeOnFail: { count: 50 },
+        },
+      );
+    }
+
+    return items.length;
+  }
+
+  async generateItemEmbedding(itemId: string): Promise<void> {
+    let item = await this.prisma.announcementItem.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        searchContext: true,
+        shortSummary: true,
+        detailedReport: true,
         kind: true,
         announcement: {
           select: {
@@ -110,48 +249,56 @@ export class EmbeddingService {
       throw new NotFoundException(`AnnouncementItem not found: ${itemId}`);
     }
 
-    const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    if (!apiKey) {
-      throw new Error(
-        "OPENAI_API_KEY is not set — cannot classify announcements or generate summaries",
-      );
+    if (!item.kind || !item.shortSummary || !item.detailedReport) {
+      await this.generateItemReport(itemId);
+      item = await this.prisma.announcementItem.findUnique({
+        where: { id: itemId },
+        select: {
+          id: true,
+          searchContext: true,
+          shortSummary: true,
+          detailedReport: true,
+          kind: true,
+          announcement: {
+            select: {
+              rawData: true,
+              sourceSystem: true,
+            },
+          },
+        },
+      });
     }
+
+    if (!item || !item.kind) {
+      throw new Error(`Item ${itemId} does not have report data required for embedding`);
+    }
+
+    const embeddingInput = this.buildEmbeddingInput({
+      kind: item.kind as AnnouncementKind,
+      shortSummary: item.shortSummary,
+      detailedReport: item.detailedReport,
+      searchContext: item.searchContext,
+    });
 
     const embeddingModel = getEmbeddingModel(this.config);
     const embeddingProvider = getEmbeddingProvider(this.config);
-    const chatModel =
-      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
 
     this.logger.debug(
-      `Embedding item ${itemId} | provider="${embeddingProvider}" | model="${embeddingModel}" | context=${item.searchContext.length} chars`,
+      `Embedding item ${itemId} | provider="${embeddingProvider}" | model="${embeddingModel}" | context=${embeddingInput.length} chars`,
     );
 
     try {
-      // 1. Klasyfikacja rodzaju — pomiń jeśli już ustawiony (np. przy re-embeddingu)
-      const kind: AnnouncementKind =
-        (item.kind as AnnouncementKind | null) ??
-        (await this.classifyKind(item.searchContext, apiKey, chatModel));
-
-      this.logger.debug(`Item ${itemId} → kind=${kind}`);
-
-      // 2. Augmented text: dołącz RODZAJ do kontekstu aby poprawić jakość wektora
-      const kindLabel = KIND_LABELS[kind];
-      const augmentedText = `RODZAJ: ${kindLabel} | ${item.searchContext}`;
-
-      // 3. Generowanie wektora z augmented text
+      const kind = item.kind as AnnouncementKind;
       const embedder = new AppEmbeddings(this.config);
-      const [baseVector] = await embedder.embedDocuments([augmentedText]);
+      const [baseVector] = await embedder.embedDocuments([embeddingInput]);
       const attachmentVectors = await this.generateAttachmentPdfEmbeddings(
         item.announcement?.rawData as Record<string, unknown> | null,
         item.announcement?.sourceSystem,
         embedder,
       );
       const vector = this.blendVectors(baseVector, attachmentVectors);
-
-      // Prisma nie obsługuje pgvector natywnie — zapisujemy przez raw SQL
       const vectorStr = `[${vector.join(",")}]`;
 
-      // 4. Zapis embedding + kind w jednym UPDATE
       await this.prisma.$executeRaw`
         UPDATE announcement_items
         SET
@@ -162,42 +309,42 @@ export class EmbeddingService {
         WHERE id = ${itemId}::uuid
       `;
 
-      // 5. Generuj shortSummary i llmEstimatedValue (na podstawie aktualnego searchContext)
-      const { summary, estimatedValue } = await this.generateSummaryAndValue(
-        item.searchContext,
-        apiKey,
-        chatModel,
-      );
-
-      await this.prisma.announcementItem.update({
-        where: { id: itemId },
-        data: {
-          shortSummary: summary,
-          llmEstimatedValue: estimatedValue != null ? String(estimatedValue) : null,
-        },
-      });
-
       this.logger.log(
         `Embedded item ${itemId} → kind=${kind} (${vector.length} dims)`,
       );
-
-      // 6. Jeśli item nie był jeszcze wzbogacony i ogłoszenie ma załączniki PDF
-      //    — kolejkuj ENRICH_ITEM (zostanie uruchomiony asynchronicznie po embedowaniu)
-      if (!item.searchContext.includes("| ZAŁĄCZNIKI:")) {
-        await this.maybeEnqueueEnrichment(itemId);
-      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to embed item ${itemId}: ${msg}`);
-
-      // Oznacz jako ERROR — job nie zostanie ponowiony (błąd zapisany w DB)
       await this.prisma.announcementItem.update({
         where: { id: itemId },
         data: { status: "ERROR" },
       });
-
-      throw err; // BullMQ zarejestruje błąd joba (retry / dead-letter)
+      throw err;
     }
+  }
+
+  private buildEmbeddingInput(input: {
+    kind: AnnouncementKind;
+    shortSummary: string | null;
+    detailedReport: string | null;
+    searchContext: string;
+  }): string {
+    const compactContext =
+      input.searchContext.length > MAX_EMBEDDING_CONTEXT_CHARS
+        ? `${input.searchContext.slice(0, MAX_EMBEDDING_CONTEXT_CHARS)}…`
+        : input.searchContext;
+    const compactReport = input.detailedReport
+      ? input.detailedReport.slice(0, MAX_EMBEDDING_REPORT_CHARS)
+      : null;
+
+    return [
+      `RODZAJ: ${KIND_LABELS[input.kind]}`,
+      input.shortSummary ? `PODSUMOWANIE: ${input.shortSummary}` : null,
+      compactReport ? `RAPORT CZĘŚCI:\n${compactReport}` : null,
+      `KONTEKST BAZOWY: ${compactContext}`,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join("\n\n");
   }
 
   private async generateAttachmentPdfEmbeddings(
@@ -281,24 +428,20 @@ export class EmbeddingService {
     return vector.map((value) => value / magnitude);
   }
 
-  // ── Prywatne ────────────────────────────────────────────────────────────────
-
-  /**
-   * Backfill: resetuje itemy z null kind do PENDING i kolejkuje je ponownie.
-   * Zwraca liczbę zakolejkowanych itemów.
-   */
   async backfillKind(): Promise<number> {
     const items = await this.prisma.announcementItem.findMany({
-      where: { kind: null },
+      where: {
+        OR: [{ kind: null }, { shortSummary: null }, { detailedReport: null }],
+      },
       select: { id: true },
     });
 
     if (items.length === 0) {
-      this.logger.log("backfillKind: no items with null kind");
+      this.logger.log("backfillKind: no items requiring report refresh");
       return 0;
     }
 
-    this.logger.log(`backfillKind: resetting ${items.length} items to PENDING`);
+    this.logger.log(`backfillKind: resetting ${items.length} items to PENDING/report-first`);
 
     await this.prisma.announcementItem.updateMany({
       where: { id: { in: items.map((i) => i.id) } },
@@ -307,9 +450,10 @@ export class EmbeddingService {
 
     for (const item of items) {
       await this.embeddingQueue.add(
-        EmbeddingJob.EMBED_ITEM,
+        EmbeddingJob.REPORT_ITEM,
         { itemId: item.id },
         {
+          jobId: `item-report-${item.id}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 5_000 },
           removeOnComplete: { count: 100 },
@@ -318,16 +462,10 @@ export class EmbeddingService {
       );
     }
 
-    this.logger.log(`backfillKind: queued ${items.length} embedding jobs`);
+    this.logger.log(`backfillKind: queued ${items.length} item report jobs`);
     return items.length;
   }
 
-  // ── Prywatne (klasyfikacja) ──────────────────────────────────────────────────
-
-  /**
-   * Używa taniego modelu (gpt-4o-mini) z zerową temperaturą — deterministyczna odpowiedź.
-   * Fallback: INNE przy nieoczekiwanej odpowiedzi modelu.
-   */
   private async classifyKind(
     searchContext: string,
     apiKey: string,
@@ -350,96 +488,121 @@ export class EmbeddingService {
         ? response.content.trim().toUpperCase()
         : "";
 
-    const matched = ANNOUNCEMENT_KINDS.find((k) => k === raw);
-
+    const matched = ANNOUNCEMENT_KINDS.find((kind) => kind === raw);
     if (!matched) {
-      this.logger.warn(
-        `Unexpected classification response: "${raw}" — falling back to INNE`,
-      );
+      this.logger.warn(`Unexpected classification response: "${raw}" — falling back to INNE`);
     }
 
     return matched ?? "INNE";
   }
 
-  /**
-   * Generuje krótkie podsumowanie ogłoszenia i szacowaną wartość na podstawie searchContext.
-   * Zwraca JSON: { summary: string, estimatedValue: number | null }
-   */
-  async generateSummaryAndValue(
-    searchContext: string,
+  private async analyzeItem(
+    item: {
+      title: string;
+      description: string | null;
+      searchContext: string;
+    },
     apiKey: string,
     model: string,
-  ): Promise<{ summary: string; estimatedValue: number | null }> {
-    const FALLBACK = { summary: "", estimatedValue: null };
+  ): Promise<{
+    kind: AnnouncementKind;
+    summary: string;
+    detailedReport: string;
+    estimatedValue: number | null;
+  }> {
     try {
-      const chat = new ChatOpenAI({ apiKey, model, temperature: 0, maxTokens: 200 });
+      const chat = new ChatOpenAI({ apiKey, model, temperature: 0, maxTokens: 1_200 });
+      const userMessage = [
+        `TYTUŁ: ${item.title}`,
+        item.description ? `OPIS: ${item.description}` : null,
+        `KONTEKST: ${item.searchContext}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
 
       const response = await chat.invoke([
-        new SystemMessage(
-          `Jesteś klasyfikatorem polskich zapytań ofertowych. Na podstawie podanego kontekstu wygeneruj TYLKO JSON (bez żadnego dodatkowego tekstu):
-{"summary":"max 15 słów, zaczynaj od kategorii np. Dostawa: notebooki, tablety, gogle VR lub Usługa: sprzątanie biur","estimatedValue":150000}
-Zasady:
-- summary: kategoria + lista głównych pozycji/zakresu, bez szczegółów
-- estimatedValue: liczba PLN netto (int) lub null jeśli nie można oszacować`,
-        ),
-        new HumanMessage(searchContext),
+        new SystemMessage(ITEM_ANALYSIS_PROMPT),
+        new HumanMessage(userMessage),
       ]);
 
       const raw = typeof response.content === "string" ? response.content.trim() : "";
       const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return { summary: raw.slice(0, 200) || "", estimatedValue: null };
+      if (!match) {
+        throw new Error("Item analysis response did not contain JSON");
+      }
 
-      const parsed = JSON.parse(match[0]) as { summary?: string; estimatedValue?: unknown };
+      const parsed = JSON.parse(match[0]) as {
+        kind?: unknown;
+        summary?: unknown;
+        detailedReport?: unknown;
+        estimatedValue?: unknown;
+      };
+      const kind = ANNOUNCEMENT_KINDS.find((value) => value === parsed.kind) ?? "INNE";
       const estimatedValue =
         typeof parsed.estimatedValue === "number" && Number.isFinite(parsed.estimatedValue)
           ? parsed.estimatedValue
           : null;
+      const summary =
+        typeof parsed.summary === "string" && parsed.summary.trim().length > 0
+          ? parsed.summary.trim().slice(0, 300)
+          : `${KIND_LABELS[kind]}: ${item.title}`.slice(0, 300);
+      const detailedReport =
+        typeof parsed.detailedReport === "string" && parsed.detailedReport.trim().length > 0
+          ? parsed.detailedReport.trim()
+          : this.buildFallbackDetailedReport(
+              item.title,
+              item.description,
+              item.searchContext,
+              summary,
+              estimatedValue,
+            );
 
-      return { summary: parsed.summary?.slice(0, 300) ?? "", estimatedValue };
+      return { kind, summary, detailedReport, estimatedValue };
     } catch (err) {
-      this.logger.warn(
-        `generateSummaryAndValue failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return FALLBACK;
+      this.logger.warn(`analyzeItem failed: ${err instanceof Error ? err.message : String(err)}`);
+      const kind = await this.classifyKind(item.searchContext, apiKey, model);
+      const summary = `${KIND_LABELS[kind]}: ${item.title}`.slice(0, 300);
+      return {
+        kind,
+        summary,
+        detailedReport: this.buildFallbackDetailedReport(
+          item.title,
+          item.description,
+          item.searchContext,
+          summary,
+          null,
+        ),
+        estimatedValue: null,
+      };
     }
   }
 
-  /**
-   * Sprawdza czy ogłoszenie powiązane z itemem ma załączniki PDF.
-   * Jeśli tak — kolejkuje job ENRICH_ITEM.
-   */
-  private async maybeEnqueueEnrichment(itemId: string): Promise<void> {
-    const item = await this.prisma.announcementItem.findUnique({
-      where: { id: itemId },
-      select: {
-        announcement: {
-          select: { rawData: true },
-        },
-      },
-    });
+  private buildFallbackDetailedReport(
+    title: string,
+    description: string | null,
+    searchContext: string,
+    summary: string,
+    estimatedValue: number | null,
+  ): string {
+    const compactDescription = description?.trim()
+      ? description.trim().slice(0, 2_000)
+      : "Brak dodatkowego opisu w danych źródłowych.";
+    const compactContext = searchContext.slice(0, 2_000);
 
-    const rawData = item?.announcement?.rawData as Record<string, unknown> | null;
-    const attachments = Array.isArray(rawData?.attachments)
-      ? (rawData.attachments as Array<{ name?: string; file?: { name?: string } }>)
-      : [];
-
-    const hasPdf = attachments.some((a) =>
-      (a.name ?? a.file?.name ?? "").toLowerCase().endsWith(".pdf"),
-    );
-
-    if (!hasPdf) return;
-
-    await this.embeddingQueue.add(
-      EmbeddingJob.ENRICH_ITEM,
-      { itemId },
-      {
-        attempts: 2,
-        backoff: { type: "exponential", delay: 10_000 },
-        removeOnComplete: { count: 100 },
-        removeOnFail: { count: 50 },
-      },
-    );
-
-    this.logger.debug(`Enqueued ENRICH_ITEM for item ${itemId}`);
+    return [
+      "## Zakres",
+      summary || title,
+      "",
+      "## Wymagania",
+      compactDescription,
+      "",
+      "## Terminy i warunki",
+      estimatedValue != null
+        ? `Szacunkowa wartość: ${estimatedValue.toLocaleString("pl-PL")} PLN netto.`
+        : "Brak pewnej wartości w danych źródłowych — wymaga doprecyzowania z dokumentacji.",
+      "",
+      "## Ryzyka",
+      compactContext,
+    ].join("\n");
   }
 }

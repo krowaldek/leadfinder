@@ -141,6 +141,7 @@ model AnnouncementItem {
   price             Decimal?               @db.Decimal(15, 2)
   kind              AnnouncementKind?
   shortSummary      String?                @db.Text
+  detailedReport    String?                @db.Text
   llmEstimatedValue Decimal?               @db.Decimal(15, 2)
   status            AnnouncementItemStatus @default(PENDING)
   createdAt         DateTime               @default(now())
@@ -225,6 +226,7 @@ model Client {
   contactPersonName String
   contactPersonRole String
   profileSummary    String          @db.Text
+  syntheticAnnouncementText String? @db.Text
   profileEmbedding  Unsupported("vector(1536)")?
   negativeKeywords  String[]        @default([])
   status            ClientStatus    @default(ACTIVE)

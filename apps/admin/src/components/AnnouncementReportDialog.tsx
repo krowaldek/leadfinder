@@ -18,12 +18,16 @@ interface AnnouncementReportDialogProps {
   announcement: Announcement | null;
   open: boolean;
   onClose: () => void;
+  allowGeneration?: boolean;
+  emptyStateMessage?: string;
 }
 
 export function AnnouncementReportDialog({
   announcement,
   open,
   onClose,
+  allowGeneration = true,
+  emptyStateMessage,
 }: AnnouncementReportDialogProps) {
   const queryClient = useQueryClient();
   const [localReport, setLocalReport] = useState<string | null>(null);
@@ -76,28 +80,30 @@ export function AnnouncementReportDialog({
 
         {/* Toolbar */}
         <div className="flex shrink-0 items-center gap-2 px-6 py-3">
-          <Button
-            size="sm"
-            onClick={() => generateMutation.mutate()}
-            disabled={generateMutation.isPending || !announcement}
-          >
-            {generateMutation.isPending ? (
-              <>
-                <RefreshCw className="mr-1.5 size-3.5 animate-spin" />
-                Generowanie…
-              </>
-            ) : report ? (
-              <>
-                <RefreshCw className="mr-1.5 size-3.5" />
-                Regeneruj raport
-              </>
-            ) : (
-              <>
-                <FileText className="mr-1.5 size-3.5" />
-                Generuj raport
-              </>
-            )}
-          </Button>
+          {allowGeneration ? (
+            <Button
+              size="sm"
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending || !announcement}
+            >
+              {generateMutation.isPending ? (
+                <>
+                  <RefreshCw className="mr-1.5 size-3.5 animate-spin" />
+                  Generowanie…
+                </>
+              ) : report ? (
+                <>
+                  <RefreshCw className="mr-1.5 size-3.5" />
+                  Regeneruj raport
+                </>
+              ) : (
+                <>
+                  <FileText className="mr-1.5 size-3.5" />
+                  Generuj raport
+                </>
+              )}
+            </Button>
+          ) : null}
 
           {report && (
             <Button size="sm" variant="outline" onClick={handleCopy}>
@@ -144,10 +150,14 @@ export function AnnouncementReportDialog({
                 <FileText className="size-8 text-muted-foreground/30" />
                 <p className="text-sm font-medium">Brak raportu</p>
                 <p className="text-xs text-muted-foreground">
-                  Kliknij „Generuj raport", aby przeprowadzić analizę ogłoszenia.
-                  <br />
-                  Raport zostanie wygenerowany na podstawie treści ogłoszenia
-                  {announcement?.items?.some((i) => i.shortSummary) ? " i podsumowań pozycji." : "."}
+                  {emptyStateMessage ?? (
+                    <>
+                      Kliknij „Generuj raport", aby przeprowadzić analizę ogłoszenia.
+                      <br />
+                      Raport zostanie wygenerowany na podstawie treści ogłoszenia
+                      {announcement?.items?.some((i) => i.shortSummary) ? " i podsumowań pozycji." : "."}
+                    </>
+                  )}
                 </p>
               </div>
             )}

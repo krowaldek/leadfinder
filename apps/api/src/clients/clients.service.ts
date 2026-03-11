@@ -1,11 +1,9 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { ChatOpenAI } from "@langchain/openai";
-import { HumanMessage } from "@langchain/core/messages";
+import { InjectQueue } from "@nestjs/bullmq";
+import { Queue } from "bullmq";
 import { PrismaService } from "../database/prisma.service.js";
-import { ClientMatchingService } from "./client-matching.service.js";
 import type { ClientProfileFields, UpdateClient } from "@leadfinder/contracts";
-import type { AppEnv } from "../config/env.js";
+import { CLIENT_MATCHING_QUEUE, ClientMatchingJob } from "./client-matching.constants.js";
 
 const SCOPE_LABELS = {
   NATIONAL: "cała Polska",
@@ -19,17 +17,14 @@ export class ClientsService {
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(ClientMatchingService)
-    private readonly matchingService: ClientMatchingService,
-    @Inject(ConfigService)
-    private readonly config: ConfigService<AppEnv>,
+    @InjectQueue(CLIENT_MATCHING_QUEUE)
+    private readonly matchingQueue: Queue,
   ) {}
 
   async createFromProfile(
     fields: ClientProfileFields,
   ): Promise<{ client: ReturnType<ClientsService["serializeClient"]>; matchCount: number }> {
     const basicSummary = this.buildProfileSummary(fields);
-    const profileSummary = await this.enrichProfileForEmbedding(fields, basicSummary);
 
     const client = await this.prisma.client.create({
       data: {
@@ -40,20 +35,15 @@ export class ClientsService {
         budgetDescription: fields.budgetDescription,
         contactPersonName: fields.contactPersonName,
         contactPersonRole: fields.contactPersonRole,
-        profileSummary,
+        profileSummary: basicSummary,
       },
     });
 
     this.logger.log(`Created client: ${client.companyName} (${client.id})`);
 
-    let matchCount = 0;
-    try {
-      matchCount = await this.matchingService.matchClient(client.id);
-    } catch (err) {
-      this.logger.error(`Initial matching failed for ${client.id}: ${String(err)}`);
-    }
+    await this.enqueueMatching(client.id);
 
-    return { client: this.serializeClient(client, matchCount), matchCount };
+    return { client: this.serializeClient(client, 0), matchCount: 0 };
   }
 
   async findAll(page = 1, limit = 20) {
@@ -121,6 +111,7 @@ export class ClientsService {
 
     return {
       clientProfileSummary: client.profileSummary,
+      clientEmbeddingText: client.syntheticAnnouncementText ?? client.profileSummary,
       data: matches.map((m) => ({
         id: m.id,
         clientId: m.clientId,
@@ -134,6 +125,7 @@ export class ClientsService {
           price: m.announcementItem.price?.toString() ?? null,
           kind: m.announcementItem.kind ?? null,
           shortSummary: m.announcementItem.shortSummary ?? null,
+          detailedReport: m.announcementItem.detailedReport ?? null,
           llmEstimatedValue: m.announcementItem.llmEstimatedValue?.toString() ?? null,
           searchContext: m.announcementItem.searchContext,
           announcement: {
@@ -230,14 +222,14 @@ export class ClientsService {
 
     const mergedForProfile = { ...merged, geographicDetails: merged.geographicDetails ?? undefined };
     const basicSummary = this.buildProfileSummary(mergedForProfile);
-    const profileSummary = await this.enrichProfileForEmbedding(
-      mergedForProfile,
-      basicSummary,
-    );
 
-    // Nullify the pgvector embedding via raw SQL (Unsupported type, not settable via Prisma client)
+    // Nullify matching representation so background job regenerates synthetic announcement + embedding
     await this.prisma.$executeRaw`
-      UPDATE clients SET "profileEmbedding" = NULL WHERE id = ${id}::uuid
+      UPDATE clients
+      SET "profileEmbedding" = NULL,
+          "syntheticAnnouncementText" = NULL,
+          "updatedAt" = NOW()
+      WHERE id = ${id}::uuid
     `;
 
     const updated = await this.prisma.client.update({
@@ -251,76 +243,68 @@ export class ClientsService {
         contactPersonName: merged.contactPersonName,
         contactPersonRole: merged.contactPersonRole,
         negativeKeywords: merged.negativeKeywords,
-        profileSummary,
+        profileSummary: basicSummary,
       },
     });
 
     this.logger.log(`Updated client: ${updated.companyName} (${updated.id})`);
 
+    await this.enqueueMatching(updated.id);
+
     const matchCount = await this.prisma.clientMatch.count({ where: { clientId: id } });
     return this.serializeClient(updated, matchCount);
   }
 
-  private async enrichProfileForEmbedding(
-    fields: ClientProfileFields & { negativeKeywords?: string[] },
-    basicSummary: string,
-  ): Promise<string> {
-    const apiKey = this.config.get<string>("OPENAI_API_KEY") ?? "";
-    if (!apiKey || !apiKey.startsWith("sk-") || apiKey.includes("xxx")) {
-      this.logger.warn("OPENAI_API_KEY not configured — skipping profile enrichment, using basic summary.");
-      return basicSummary;
+  async enqueueMatching(clientId: string): Promise<void> {
+    await this.matchingQueue.add(
+      ClientMatchingJob.MATCH_CLIENT,
+      { clientId },
+      {
+        jobId: `client-match-${clientId}`,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5_000 },
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 10 },
+      },
+    );
+  }
+
+  async backfillClients(options?: { status?: "ACTIVE" | "INACTIVE" }): Promise<{
+    queued: number;
+    total: number;
+    status: "ACTIVE" | "INACTIVE" | "ALL";
+  }> {
+    const filterStatus = options?.status;
+    const clients = await this.prisma.client.findMany({
+      where: filterStatus ? { status: filterStatus } : undefined,
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (clients.length === 0) {
+      return { queued: 0, total: 0, status: filterStatus ?? "ALL" };
     }
 
-    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
-    const llm = new ChatOpenAI({ apiKey, model: chatModel, temperature: 0.3 });
-
-    const scope = SCOPE_LABELS[fields.geographicScope];
-    const geo = fields.geographicDetails
-      ? `${scope} (${fields.geographicDetails})`
-      : scope;
-
-    const negSection =
-      fields.negativeKeywords && fields.negativeKeywords.length > 0
-        ? `\n\nFirma NIE jest zainteresowana następującymi zakresami i je wyklucza (pomiń je w profilu): ${fields.negativeKeywords.join(", ")}`
-        : "";
-
-    const prompt = `Jesteś ekspertem od zamówień publicznych i przetargów w Polsce (BZP, Baza Konkurencyjności, e-Zamówienia, platformy zakupowe).
-
-Na podstawie poniższego profilu firmy wygeneruj BOGATY PROFIL TECHNICZNY przeznaczony do przeszukiwania wektorowego ogłoszeń przetargowych.
-
-== PROFIL FIRMY ==
-Firma: ${fields.companyName}
-Branża/Specjalizacja: ${fields.industry}
-Zasięg geograficzny: ${geo}
-Skala zamówień: ${fields.budgetDescription}${negSection}
-
-== TWOJE ZADANIE ==
-Wygeneruj zwięzły tekst (max 350 słów) bogaty w:
-1. Specjalistyczne słownictwo branżowe używane w ogłoszeniach przetargowych
-2. Synonimy i alternatywne nazewnictwo tej samej działalności w języku zamówień publicznych
-3. Powiązane zakresy prac, dostaw lub usług, które firma z tej branży typowo realizuje
-4. Słowne odpowiedniki kodów CPV i terminologię z SIWZ/SWZ/OPZ
-5. Wyrazy kluczowe często pojawiające się w tytułach i opisach ogłoszeń dla tej branży
-
-WAŻNE:
-- Tekst ma być GĘSTY w słowa kluczowe — jest wejściem dla modelu embeddingowego, nie dla człowieka
-- Pisz po polsku, pełnymi zdaniami lub listami fraz
-- NIE włączaj wykluczeń do profilu — pisz wyłącznie to, czego firma SZUKA
-- NIE powtarzaj danych kontaktowych, budżetu ani zasięgu — skup się wyłącznie na terminologii branżowej
-- NIE dodawaj nagłówków, wstępów ani komentarzy — tylko sam tekst profilu`;
-
-    try {
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const enriched = (response.content as string).trim();
-      if (enriched.length > 80) {
-        this.logger.log(`Profile enriched with technical synonyms for: ${fields.companyName}`);
-        return `${basicSummary}\n\n${enriched}`;
-      }
-    } catch (err) {
-      this.logger.warn(`Profile enrichment failed — using basic summary: ${String(err)}`);
+    for (const client of clients) {
+      await this.prisma.$executeRaw`
+        UPDATE clients
+        SET "profileEmbedding" = NULL,
+            "syntheticAnnouncementText" = NULL,
+            "updatedAt" = NOW()
+        WHERE id = ${client.id}::uuid
+      `;
+      await this.enqueueMatching(client.id);
     }
 
-    return basicSummary;
+    this.logger.log(
+      `Backfill queued for ${clients.length} client(s) with status=${filterStatus ?? "ALL"}`,
+    );
+
+    return {
+      queued: clients.length,
+      total: clients.length,
+      status: filterStatus ?? "ALL",
+    };
   }
 
   private buildProfileSummary(fields: ClientProfileFields & { negativeKeywords?: string[] }): string {

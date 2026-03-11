@@ -131,7 +131,7 @@ export function ClientMatchesPage() {
   }
 
   const allMatches = matchesQuery.data?.data ?? [];
-  const clientProfileSummary = matchesQuery.data?.clientProfileSummary;
+  const clientEmbeddingText = matchesQuery.data?.clientEmbeddingText ?? matchesQuery.data?.clientProfileSummary;
   const total = matchesQuery.data?.meta.total ?? 0;
   const shortlisted = allMatches.filter((m) => m.status === "SHORTLISTED").length;
   const dismissed = allMatches.filter((m) => m.status === "DISMISSED").length;
@@ -337,7 +337,12 @@ export function ClientMatchesPage() {
             title="Raport analityczny"
             onClick={() => {
               const ann = row.announcementItem.announcement;
-              setReportTarget({ id: ann.id, title: ann.title, detailedReport: ann.detailedReport ?? null } as unknown as Announcement);
+              const itemReport = (row.announcementItem as { detailedReport?: string | null }).detailedReport ?? null;
+              setReportTarget({
+                id: ann.id,
+                title: `${ann.title} — ${row.announcementItem.title}`,
+                detailedReport: itemReport ?? ann.detailedReport,
+              } as unknown as Announcement);
             }}
           >
             <FileText className="size-3.5" />
@@ -470,7 +475,7 @@ export function ClientMatchesPage() {
 
       <MatchDetailSheet
         match={detailMatch}
-        clientProfileSummary={clientProfileSummary}
+        clientEmbeddingText={clientEmbeddingText}
         open={!!detailMatch}
         onOpenChange={(open) => { if (!open) setDetailMatch(null); }}
       />
@@ -479,6 +484,8 @@ export function ClientMatchesPage() {
         announcement={reportTarget}
         open={!!reportTarget}
         onClose={() => setReportTarget(null)}
+        allowGeneration={false}
+        emptyStateMessage="Dla tej pozycji nie ma jeszcze raportu itemu używanego do embeddingu. Ten widok nie generuje osobnego raportu ogłoszenia, żeby nie dublować kosztu analizy."
       />
     </div>
   );

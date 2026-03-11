@@ -50,6 +50,31 @@ export interface LogsStats {
   report: TypeStats;
 }
 
+export interface ReembedSourceProgress {
+  sourceSystem: string;
+  totalItems: number;
+  embeddedItems: number;
+  itemsWithReport: number;
+  reportReadyItems: number;
+  embeddedWithReport: number;
+  legacyEmbeddedItems: number;
+  pendingItems: number;
+  errorItems: number;
+  reembedCoverage: number;
+}
+
+export interface ReembedProgress {
+  summary: Omit<ReembedSourceProgress, "sourceSystem">;
+  queue: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  };
+  bySource: ReembedSourceProgress[];
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────────
 
 async function fetchLogs(
@@ -66,6 +91,11 @@ async function fetchLogs(
 
 async function fetchStats(): Promise<LogsStats> {
   const res = await api.get<LogsStats>("/logs/stats");
+  return res.data;
+}
+
+async function fetchReembedProgress(): Promise<ReembedProgress> {
+  const res = await api.get<ReembedProgress>("/logs/reembed-progress");
   return res.data;
 }
 
@@ -109,6 +139,14 @@ export function useLogsStats(refetchInterval = 15_000) {
   return useQuery<LogsStats>({
     queryKey: ["logs", "stats"],
     queryFn: fetchStats,
+    refetchInterval,
+  });
+}
+
+export function useReembedProgress(refetchInterval = 15_000) {
+  return useQuery<ReembedProgress>({
+    queryKey: ["logs", "reembed-progress"],
+    queryFn: fetchReembedProgress,
     refetchInterval,
   });
 }

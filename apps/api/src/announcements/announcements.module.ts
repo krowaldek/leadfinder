@@ -9,5 +9,6 @@ import { LogsModule } from "../logs/logs.module.js";
   imports: [DatabaseModule, LogsModule],
   providers: [AnnouncementsService, AnnouncementReportService],
   controllers: [AnnouncementsController],
+  exports: [AnnouncementReportService],
 })
 export class AnnouncementsModule {}

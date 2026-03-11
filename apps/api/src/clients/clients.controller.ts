@@ -12,15 +12,12 @@ import {
   ParseIntPipe,
   DefaultValuePipe,
 } from "@nestjs/common";
-import { InjectQueue } from "@nestjs/bullmq";
-import { Queue } from "bullmq";
 import { JwtAuthGuard } from "../common/jwt-auth.guard.js";
 import { RolesGuard } from "../common/roles.guard.js";
 import { Roles } from "../common/roles.decorator.js";
 import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
 import { ClientsService } from "./clients.service.js";
 import { ClientPromptService } from "./client-prompt.service.js";
-import { CLIENT_MATCHING_QUEUE, ClientMatchingJob } from "./client-matching.constants.js";
 import {
   promptRequestSchema,
   updateMatchStatusSchema,
@@ -38,7 +35,6 @@ export class ClientsController {
     @Inject(ClientsService) private readonly clientsService: ClientsService,
     @Inject(ClientPromptService)
     private readonly promptService: ClientPromptService,
-    @InjectQueue(CLIENT_MATCHING_QUEUE) private readonly matchingQueue: Queue,
   ) {}
 
   /**
@@ -86,18 +82,6 @@ export class ClientsController {
   ) {
     const updated = await this.clientsService.updateClient(id, body);
 
-    // Queue rematch so new embedding + penalties are recalculated
-    await this.matchingQueue.add(
-      ClientMatchingJob.MATCH_CLIENT,
-      { clientId: id },
-      {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5000 },
-        removeOnComplete: { count: 20 },
-        removeOnFail: { count: 10 },
-      },
-    );
-
     return { data: updated, rematch: "queued" };
   }
 
@@ -108,18 +92,20 @@ export class ClientsController {
     // Validate client exists
     await this.clientsService.findOne(id);
 
-    await this.matchingQueue.add(
-      ClientMatchingJob.MATCH_CLIENT,
-      { clientId: id },
-      {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5000 },
-        removeOnComplete: { count: 20 },
-        removeOnFail: { count: 10 },
-      },
-    );
+    await this.clientsService.enqueueMatching(id);
 
     return { message: "Rematch initiated", clientId: id };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Post("backfill")
+  async backfill() {
+    const result = await this.clientsService.backfillClients({ status: "ACTIVE" });
+    return {
+      message: "Client backfill queued",
+      ...result,
+    };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

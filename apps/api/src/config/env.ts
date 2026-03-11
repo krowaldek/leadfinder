@@ -13,6 +13,7 @@ const envSchema = z.object({
   EZ_API_BASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().default("redis://localhost:6380"),
   BK_SCRAPER_CRON: z.string().default("0 6 * * *"),
+  EMBEDDING_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(6),
   EMBEDDING_PROVIDER: z.enum(["OPENAI", "GOOGLE"]).default("OPENAI"),
   EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
   OPENAI_API_KEY: z.string().optional(),

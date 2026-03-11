@@ -67,25 +67,35 @@ export class AnnouncementReportService {
    * Pobiera treść PDF-ów, agreguje konteksty pozycji i wywołuje GPT.
    * Wynik zapisuje w announcement.detailedReport i zwraca jako string.
    */
-  async generateReport(announcementId: string): Promise<string> {
-    const logId = await this.jobLogger.start({
-      type: "REPORT",
-      jobName: "GENERATE_REPORT",
-      entityId: announcementId,
-      payload: { announcementId },
-    });
+  async generateReport(
+    announcementId: string,
+    options?: { log?: boolean },
+  ): Promise<string> {
+    const shouldLog = options?.log ?? true;
+    const logId = shouldLog
+      ? await this.jobLogger.start({
+          type: "REPORT",
+          jobName: "GENERATE_REPORT",
+          entityId: announcementId,
+          payload: { announcementId },
+        })
+      : null;
 
     try {
-      const result = await this._doGenerateReport(announcementId, logId);
-      return result;
+      return await this._doGenerateReport(announcementId, logId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+      if (logId) {
+        const message = err instanceof Error ? err.message : String(err);
+        await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+      }
       throw err;
     }
   }
 
-  private async _doGenerateReport(announcementId: string, logId: string): Promise<string> {
+  private async _doGenerateReport(
+    announcementId: string,
+    logId: string | null,
+  ): Promise<string> {
     const announcement = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
       select: {
@@ -102,6 +112,7 @@ export class AnnouncementReportService {
             description: true,
             searchContext: true,
             shortSummary: true,
+            detailedReport: true,
             llmEstimatedValue: true,
             kind: true,
           },
@@ -142,6 +153,9 @@ export class AnnouncementReportService {
         const parts: string[] = [`[Pozycja ${i + 1}] ${item.title}`];
         if (item.description) parts.push(`Opis: ${item.description}`);
         if (item.shortSummary) parts.push(`Podsumowanie LLM: ${item.shortSummary}`);
+        if (item.detailedReport) {
+          parts.push(`Raport części:\n${item.detailedReport.slice(0, 4_000)}`);
+        }
         if (item.llmEstimatedValue)
           parts.push(`Wartość szacunkowa LLM: ${item.llmEstimatedValue.toString()} PLN`);
         if (item.searchContext) {
@@ -191,17 +205,19 @@ export class AnnouncementReportService {
 
     this.logger.log(`Report generated for announcement ${announcementId} (${report.length} chars)`);
 
-    await this.jobLogger.finish({
-      logId,
-      status: "COMPLETED",
-      result: {
-        announcementId,
-        title: announcement.title,
-        reportLength: report.length,
-        attachmentsProcessed: attachmentTexts.length,
-        itemsCount: announcement.items.length,
-      },
-    });
+    if (logId) {
+      await this.jobLogger.finish({
+        logId,
+        status: "COMPLETED",
+        result: {
+          announcementId,
+          title: announcement.title,
+          reportLength: report.length,
+          attachmentsProcessed: attachmentTexts.length,
+          itemsCount: announcement.items.length,
+        },
+      });
+    }
 
     return report;
   }

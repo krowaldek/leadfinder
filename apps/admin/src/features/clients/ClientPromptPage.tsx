@@ -68,17 +68,11 @@ export function ClientPromptPage() {
       } else {
         setCreatedClient(res.client);
         void queryClient.invalidateQueries({ queryKey: ["clients"] });
-        const matchWord =
-          res.matchCount === 1
-            ? "dopasowanie"
-            : res.matchCount < 5
-              ? "dopasowania"
-              : "dopasowań";
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            text: `✅ Profil firmy **${res.client.companyName}** został utworzony!\n\nZnaleziono **${res.matchCount} ${matchWord}** z naszej bazy ogłoszeń. Możesz je przeglądać na stronie klientów.`,
+            text: `✅ Profil firmy **${res.client.companyName}** został utworzony!\n\nGeneruję teraz syntetyczne ogłoszenie klienta i przeliczam dopasowania w tle. Za chwilę będą widoczne na stronie klientów.`,
           },
         ]);
       }

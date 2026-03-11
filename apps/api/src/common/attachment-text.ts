@@ -5,10 +5,19 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (
-  buffer: Buffer,
-  options?: Record<string, unknown>,
-) => Promise<{ text: string; numpages: number }>;
+const pdfParseModule = require("pdf-parse") as {
+  PDFParse?: new (input: {
+    data: Buffer | Uint8Array;
+    verbosity?: number;
+  }) => {
+    getText(params?: Record<string, unknown>): Promise<{
+      text: string;
+      total?: number;
+      pages?: Array<{ num: number; text: string }>;
+    }>;
+    destroy(): Promise<void>;
+  };
+};
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mammoth = require("mammoth") as {
   extractRawText(input: { buffer: Buffer }): Promise<{ value: string }>;
@@ -56,6 +65,35 @@ if (!(globalThis as Record<string, unknown>).ImageData) {
 }
 if (!(globalThis as Record<string, unknown>).Path2D) {
   (globalThis as Record<string, unknown>).Path2D = canvas.Path2D;
+}
+
+async function pdfParse(
+  buffer: Buffer,
+  options?: Record<string, unknown>,
+): Promise<{ text: string; numpages: number }> {
+  const PdfParser = pdfParseModule.PDFParse;
+  if (!PdfParser) {
+    throw new Error("pdf-parse does not expose PDFParse constructor");
+  }
+
+  const parser = new PdfParser({
+    data: buffer,
+  });
+
+  try {
+    const parsed = await parser.getText(options);
+    return {
+      text: typeof parsed.text === "string" ? parsed.text : "",
+      numpages:
+        typeof parsed.total === "number"
+          ? parsed.total
+          : Array.isArray(parsed.pages)
+            ? parsed.pages.length
+            : 0,
+    };
+  } finally {
+    await parser.destroy();
+  }
 }
 
 const SUPPORTED_EXTENSIONS = new Set([

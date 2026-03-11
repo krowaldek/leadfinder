@@ -103,12 +103,12 @@ function SimilarityBar({ similarity }: { similarity: number }) {
 
 interface Props {
   match: ClientMatchResponse | null;
-  clientProfileSummary?: string;
+  clientEmbeddingText?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChange }: Props) {
+export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChange }: Props) {
   if (!match) return null;
 
   const item = match.announcementItem;
@@ -116,6 +116,7 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
   const sc = (item as { searchContext?: string }).searchContext;
   const kind = (item as { kind?: string | null }).kind;
   const shortSummary = (item as { shortSummary?: string | null }).shortSummary;
+  const detailedReport = (item as { detailedReport?: string | null }).detailedReport;
   const llmEstimatedValue = (item as { llmEstimatedValue?: string | null }).llmEstimatedValue;
   const parsedCtx = sc ? parseSearchContext(sc) : null;
 
@@ -183,9 +184,8 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
             <>
               <Section title="Dane ogłoszenia użyte do embeddingu">
                 <p className="mb-1 text-xs text-muted-foreground">
-                  Poniższy tekst (po wzbogaceniu o klasyfikację rodzaju) był wektoryzowany modelem{" "}
-                  <code className="rounded bg-muted px-1 text-[11px]">text-embedding-3-small</code>.
-                  Wynik porównano z wektorem profilu klienta.
+                  To jest zachowany kontekst źródłowy pozycji. W nowym pipeline embedding powstaje z rodzaju,
+                  podsumowania, raportu pozycji i tego bazowego kontekstu.
                 </p>
                 <div className="grid gap-2 rounded-lg border bg-muted/40 p-3">
                   {parsedCtx.map(({ label, value }) => (
@@ -200,16 +200,41 @@ export function MatchDetailSheet({ match, clientProfileSummary, open, onOpenChan
             </>
           )}
 
-          {/* Profil klienta */}
-          {clientProfileSummary && (
+          {detailedReport ? (
             <>
-              <Section title="Profil klienta (embedding)">
+              <Section title="Raport pozycji użyty do embeddingu">
                 <p className="mb-1 text-xs text-muted-foreground">
-                  Tekst profilu klienta wektoryzowany przy tworzeniu / edycji klienta.
-                  Jego wektor jest porównywany ze wszystkimi ogłoszeniami w DB.
+                  To jest raport części / itemu. W nowym pipeline to ten tekst jest głównym wejściem do wektoryzacji.
                 </p>
                 <div className="rounded-lg border bg-muted/40 p-3">
-                  <p className="text-sm leading-relaxed">{clientProfileSummary}</p>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                    {detailedReport}
+                  </p>
+                </div>
+              </Section>
+              <Separator />
+            </>
+          ) : (
+            <>
+              <Section title="Raport pozycji użyty do embeddingu">
+                <p className="text-xs text-muted-foreground">
+                  Dla tej pozycji nie ma jeszcze raportu itemu. To zwykle oznacza starszy embedding z poprzedniego pipeline'u,
+                  zanim przeszliśmy na report-first.
+                </p>
+              </Section>
+              <Separator />
+            </>
+          )}
+
+          {/* Tekst klienta */}
+          {clientEmbeddingText && (
+            <>
+              <Section title="Tekst klienta użyty do embeddingu">
+                <p className="mb-1 text-xs text-muted-foreground">
+                  To jest aktualny tekst klienta, z którego powstał wektor porównywany z pozycjami ogłoszeń.
+                </p>
+                <div className="rounded-lg border bg-muted/40 p-3">
+                  <p className="text-sm leading-relaxed">{clientEmbeddingText}</p>
                 </div>
               </Section>
               <Separator />
