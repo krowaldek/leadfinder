@@ -8,13 +8,13 @@ import { AppEmbeddings, hasValidEmbeddingConfig } from "../common/embeddings.js"
 
 interface RawSearchRow {
   id: string;
-  announcement_id: string;
+  announcement_id: string; // same as id (kept for structural compatibility)
   title: string;
   description: string | null;
-  price: unknown;
+  price: unknown; // null – announcements have no item-level price
   source: string;
   external_id: string;
-  announcement_title: string;
+  announcement_title: string; // same as title (kept for structural compatibility)
   value_min: unknown;
   value_max: unknown;
   url: string;
@@ -277,11 +277,11 @@ export class SearchService {
   ): Promise<RawSearchRow[]> {
     return this.prisma.$queryRaw<RawSearchRow[]>`
       SELECT
-        ai.id,
-        ai."announcementId" AS announcement_id,
-        ai.title,
-        ai.description,
-        ai.price,
+        a.id,
+        a."externalId" AS announcement_id,
+        a.title,
+        a.description,
+        NULL::text AS price,
         a."sourceSystem" AS source,
         a."externalId" AS external_id,
         a.title AS announcement_title,
@@ -290,15 +290,14 @@ export class SearchService {
         a.url,
         a."publishedAt" AS published_at,
         a."deadlineAt" AS deadline_at,
-        (1 - (ai.embedding <=> ${vectorStr}::vector)) AS semantic_similarity,
+        (1 - (a.embedding <=> ${vectorStr}::vector)) AS semantic_similarity,
         NULL::double precision AS keyword_rank
-      FROM announcement_items ai
-      JOIN announcements a ON a.id = ai."announcementId"
+      FROM announcements a
       WHERE
-        ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
-        AND ai.embedding IS NOT NULL
-        AND (1 - (ai.embedding <=> ${vectorStr}::vector)) >= ${threshold}
-      ORDER BY ai.embedding <=> ${vectorStr}::vector
+        a."embeddingStatus" = 'EMBEDDED'
+        AND a.embedding IS NOT NULL
+        AND (1 - (a.embedding <=> ${vectorStr}::vector)) >= ${threshold}
+      ORDER BY a.embedding <=> ${vectorStr}::vector
       LIMIT ${limit}
     `;
   }
@@ -309,11 +308,11 @@ export class SearchService {
   ): Promise<RawSearchRow[]> {
     return this.prisma.$queryRaw<RawSearchRow[]>`
       SELECT
-        ai.id,
-        ai."announcementId" AS announcement_id,
-        ai.title,
-        ai.description,
-        ai.price,
+        a.id,
+        a."externalId" AS announcement_id,
+        a.title,
+        a.description,
+        NULL::text AS price,
         a."sourceSystem" AS source,
         a."externalId" AS external_id,
         a.title AS announcement_title,
@@ -326,17 +325,16 @@ export class SearchService {
         ts_rank_cd(
           to_tsvector(
             'simple',
-            coalesce(ai.title, '') || ' ' || coalesce(ai.description, '') || ' ' || coalesce(a.title, '')
+            coalesce(a.title, '') || ' ' || coalesce(a.description, '') || ' ' || coalesce(a."searchContext", '')
           ),
           plainto_tsquery('simple', ${query})
         ) AS keyword_rank
-      FROM announcement_items ai
-      JOIN announcements a ON a.id = ai."announcementId"
+      FROM announcements a
       WHERE
-        ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
+        a."embeddingStatus" = 'EMBEDDED'
         AND to_tsvector(
           'simple',
-          coalesce(ai.title, '') || ' ' || coalesce(ai.description, '') || ' ' || coalesce(a.title, '')
+          coalesce(a.title, '') || ' ' || coalesce(a.description, '') || ' ' || coalesce(a."searchContext", '')
         ) @@ plainto_tsquery('simple', ${query})
       ORDER BY keyword_rank DESC
       LIMIT ${limit}
@@ -674,8 +672,8 @@ export class SearchService {
 
   private async getFeedbackScores(itemIds: string[]): Promise<Map<string, number>> {
     const rows = await this.prisma.clientMatch.findMany({
-      where: { announcementItemId: { in: itemIds } },
-      select: { announcementItemId: true, status: true },
+      where: { announcementId: { in: itemIds } },
+      select: { announcementId: true, status: true },
     });
 
     const weights: Record<string, number> = {
@@ -687,10 +685,10 @@ export class SearchService {
 
     const agg = new Map<string, { sum: number; count: number }>();
     for (const row of rows) {
-      const current = agg.get(row.announcementItemId) ?? { sum: 0, count: 0 };
+      const current = agg.get(row.announcementId) ?? { sum: 0, count: 0 };
       current.sum += weights[row.status] ?? 0;
       current.count += 1;
-      agg.set(row.announcementItemId, current);
+      agg.set(row.announcementId, current);
     }
 
     const scores = new Map<string, number>();

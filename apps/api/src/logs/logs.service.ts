@@ -78,6 +78,21 @@ export interface ReembedProgress {
   bySource: ReembedSourceProgress[];
 }
 
+export interface TokenTypeStats {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  jobsWithTokens: number;
+}
+
+export interface TokenStats {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  jobsWithTokens: number;
+  byType: Record<string, TokenTypeStats>;
+}
+
 @Injectable()
 export class LogsService {
   constructor(
@@ -172,25 +187,23 @@ export class LogsService {
         SELECT
           a."sourceSystem" AS "sourceSystem",
           COUNT(*)::int AS "totalItems",
-          COUNT(*) FILTER (WHERE ai.status = 'EMBEDDED'::"AnnouncementItemStatus")::int AS "embeddedItems",
-          COUNT(*) FILTER (WHERE ai."detailedReport" IS NOT NULL)::int AS "itemsWithReport",
+          COUNT(*) FILTER (WHERE a."embeddingStatus" = 'EMBEDDED'::"EmbeddingStatus")::int AS "embeddedItems",
+          COUNT(*) FILTER (WHERE a."detailedReport" IS NOT NULL)::int AS "itemsWithReport",
           COUNT(*) FILTER (
-            WHERE ai.kind IS NOT NULL
-              AND ai."shortSummary" IS NOT NULL
-              AND ai."detailedReport" IS NOT NULL
+            WHERE a.kind IS NOT NULL
+              AND a."detailedReport" IS NOT NULL
           )::int AS "reportReadyItems",
           COUNT(*) FILTER (
-            WHERE ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
-              AND ai."detailedReport" IS NOT NULL
+            WHERE a."embeddingStatus" = 'EMBEDDED'::"EmbeddingStatus"
+              AND a."detailedReport" IS NOT NULL
           )::int AS "embeddedWithReport",
           COUNT(*) FILTER (
-            WHERE ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
-              AND ai."detailedReport" IS NULL
+            WHERE a."embeddingStatus" = 'EMBEDDED'::"EmbeddingStatus"
+              AND a."detailedReport" IS NULL
           )::int AS "legacyEmbeddedItems",
-          COUNT(*) FILTER (WHERE ai.status = 'PENDING'::"AnnouncementItemStatus")::int AS "pendingItems",
-          COUNT(*) FILTER (WHERE ai.status = 'ERROR'::"AnnouncementItemStatus")::int AS "errorItems"
-        FROM announcement_items ai
-        JOIN announcements a ON a.id = ai."announcementId"
+          COUNT(*) FILTER (WHERE a."embeddingStatus" = 'PENDING'::"EmbeddingStatus")::int AS "pendingItems",
+          COUNT(*) FILTER (WHERE a."embeddingStatus" = 'ERROR'::"EmbeddingStatus")::int AS "errorItems"
+        FROM announcements a
         GROUP BY a."sourceSystem"
         ORDER BY a."sourceSystem" ASC
       `),
@@ -245,6 +258,55 @@ export class LogsService {
         delayed: queue.delayed,
       },
       bySource,
+    };
+  }
+
+  async getTokenStats(): Promise<TokenStats> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        job_type: string;
+        prompt_tokens: bigint;
+        completion_tokens: bigint;
+        total_tokens: bigint;
+        jobs_count: bigint;
+      }>
+    >`
+      SELECT
+        type                                                            AS job_type,
+        COALESCE(SUM((result->>'promptTokens')::bigint), 0)            AS prompt_tokens,
+        COALESCE(SUM((result->>'completionTokens')::bigint), 0)        AS completion_tokens,
+        COALESCE(SUM((result->>'totalTokens')::bigint), 0)             AS total_tokens,
+        COUNT(*) FILTER (WHERE result->>'totalTokens' IS NOT NULL)     AS jobs_count
+      FROM job_logs
+      WHERE status = 'COMPLETED'
+        AND result IS NOT NULL
+      GROUP BY type
+    `;
+
+    const byType: Record<string, TokenTypeStats> = {};
+    let sumPrompt = 0;
+    let sumCompletion = 0;
+    let sumTotal = 0;
+    let sumJobs = 0;
+
+    for (const row of rows) {
+      const p = Number(row.prompt_tokens);
+      const c = Number(row.completion_tokens);
+      const t = Number(row.total_tokens);
+      const j = Number(row.jobs_count);
+      byType[row.job_type] = { promptTokens: p, completionTokens: c, totalTokens: t, jobsWithTokens: j };
+      sumPrompt += p;
+      sumCompletion += c;
+      sumTotal += t;
+      sumJobs += j;
+    }
+
+    return {
+      promptTokens: sumPrompt,
+      completionTokens: sumCompletion,
+      totalTokens: sumTotal,
+      jobsWithTokens: sumJobs,
+      byType,
     };
   }
 }

@@ -5,7 +5,7 @@ import {
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
-  Optional,
+  Inject,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../common/jwt-auth.guard.js";
 import { RolesGuard } from "../common/roles.guard.js";
@@ -17,7 +17,7 @@ import { LogsService } from "./logs.service.js";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(SystemRole.ADMIN, SystemRole.SUPER_ADMIN)
 export class LogsController {
-  constructor(private readonly logsService: LogsService) {}
+  constructor(@Inject(LogsService) private readonly logsService: LogsService) {}
 
   @Get("scraper")
   async scraperLogs(
@@ -54,5 +54,10 @@ export class LogsController {
   @Get("reembed-progress")
   async reembedProgress() {
     return this.logsService.getReembedProgress();
+  }
+
+  @Get("token-stats")
+  async tokenStats() {
+    return this.logsService.getTokenStats();
   }
 }

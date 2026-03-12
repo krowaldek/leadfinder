@@ -20,7 +20,7 @@ export interface FinishLogOptions {
 
 /**
  * Injectable service for writing structured job-level log entries to the DB.
- * Used by ScraperProcessor, EmbeddingProcessor and AnnouncementReportService.
+ * Used by ScraperProcessor and EmbeddingProcessor.
  */
 @Injectable()
 export class JobLoggerService {

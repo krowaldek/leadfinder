@@ -87,38 +87,6 @@ enum AnnouncementStatus {
   UNKNOWN
 }
 
-model Announcement {
-  id             String              @id @default(uuid()) @db.Uuid
-  sourceSystem   AnnouncementSource
-  externalId     String
-  title          String
-  description    String?
-  url            String
-  status         AnnouncementStatus  @default(OPEN)
-  valueMin       Decimal?            @db.Decimal(15, 2)
-  valueMax       Decimal?            @db.Decimal(15, 2)
-  publishedAt    DateTime?
-  deadlineAt     DateTime?
-  embedding      Unsupported("vector(1536)")?
-  rawData        Json
-  detailedReport String?             @db.Text
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  items          AnnouncementItem[]
-
-  @@unique([sourceSystem, externalId])
-  @@index([sourceSystem])
-  @@index([status])
-  @@index([deadlineAt])
-  @@map("announcements")
-}
-
-enum AnnouncementItemStatus {
-  PENDING
-  EMBEDDED
-  ERROR
-}
-
 enum AnnouncementKind {
   DOSTAWA
   USLUGA
@@ -130,29 +98,46 @@ enum AnnouncementKind {
   INNE
 }
 
-model AnnouncementItem {
-  id                String                 @id @default(uuid()) @db.Uuid
-  announcementId    String                 @db.Uuid
-  itemIndex         Int
-  title             String
-  description       String?                @db.Text
-  searchContext     String                 @db.Text
-  embedding         Unsupported("vector(1536)")?
-  price             Decimal?               @db.Decimal(15, 2)
-  kind              AnnouncementKind?
-  shortSummary      String?                @db.Text
-  detailedReport    String?                @db.Text
-  llmEstimatedValue Decimal?               @db.Decimal(15, 2)
-  status            AnnouncementItemStatus @default(PENDING)
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
-  announcement      Announcement           @relation(fields: [announcementId], references: [id], onDelete: Cascade)
-  clientMatches     ClientMatch[]
+enum EmbeddingStatus {
+  PENDING
+  EMBEDDED
+  ERROR
+}
 
-  @@unique([announcementId, itemIndex])
-  @@index([announcementId])
+/// Flat announcement record. Multi-part tenders are stored as separate rows sharing
+/// the same externalId but with different partIndex values (0, 1, 2, …).
+model Announcement {
+  id                String             @id @default(uuid()) @db.Uuid
+  sourceSystem      AnnouncementSource
+  externalId        String
+  /// 0 for single-part tenders; 0, 1, 2 … for each lot/part of a multi-part tender.
+  partIndex         Int                @default(0)
+  title             String
+  description       String?            @db.Text
+  url               String
+  status            AnnouncementStatus @default(OPEN)
+  valueMin          Decimal?           @db.Decimal(15, 2)
+  valueMax          Decimal?           @db.Decimal(15, 2)
+  publishedAt       DateTime?
+  deadlineAt        DateTime?
+  /// Condensed text used as embedding input (title + description + CPV codes etc.)
+  searchContext     String             @default("") @db.Text
+  kind              AnnouncementKind?
+  detailedReport    String?            @db.Text
+  llmEstimatedValue Decimal?           @db.Decimal(15, 2)
+  embeddingStatus   EmbeddingStatus    @default(PENDING)
+  embedding         Unsupported("vector(1536)")?
+  rawData           Json
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  matches           ClientMatch[]
+
+  @@unique([sourceSystem, externalId, partIndex])
+  @@index([sourceSystem])
   @@index([status])
-  @@map("announcement_items")
+  @@index([deadlineAt])
+  @@index([embeddingStatus])
+  @@map("announcements")
 }
 
 enum AttachmentCacheStatus {
@@ -195,7 +180,7 @@ model ScraperMetadata {
 }
 
 // ---------------------------------------------------------------------------
-// Clients
+// Clients, Projects, Topics
 // ---------------------------------------------------------------------------
 
 enum GeographicScope {
@@ -225,33 +210,69 @@ model Client {
   budgetDescription String
   contactPersonName String
   contactPersonRole String
-  profileSummary    String          @db.Text
-  syntheticAnnouncementText String? @db.Text
-  profileEmbedding  Unsupported("vector(1536)")?
-  negativeKeywords  String[]        @default([])
   status            ClientStatus    @default(ACTIVE)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
-  matches           ClientMatch[]
+  projects          Project[]
 
   @@index([status])
   @@map("clients")
 }
 
-model ClientMatch {
-  id                 String            @id @default(uuid()) @db.Uuid
-  clientId           String            @db.Uuid
-  announcementItemId String            @db.Uuid
-  similarity         Float
-  status             ClientMatchStatus @default(NEW)
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  client             Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  announcementItem   AnnouncementItem  @relation(fields: [announcementItemId], references: [id], onDelete: Cascade)
+/// A procurement initiative belonging to a client (e.g. "IT equipment Q3 2026").
+model Project {
+  id          String   @id @default(uuid()) @db.Uuid
+  clientId    String   @db.Uuid
+  name        String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  @@unique([clientId, announcementItemId])
+  client Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  topics Topic[]
+
   @@index([clientId])
-  @@index([announcementItemId])
+  @@map("projects")
+}
+
+/// A specific matching subject within a project.
+/// The `prompt` text is written by the user and gets vectorised for semantic matching.
+model Topic {
+  id               String          @id @default(uuid()) @db.Uuid
+  projectId        String          @db.Uuid
+  title            String
+  /// Free-form description used to build the embedding (user-written prompt).
+  prompt           String          @db.Text
+  embedding        Unsupported("vector(1536)")?
+  embeddingStatus  EmbeddingStatus @default(PENDING)
+  negativeKeywords String[]        @default([])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  matches ClientMatch[]
+
+  @@index([projectId])
+  @@index([embeddingStatus])
+  @@map("topics")
+}
+
+/// Links a Topic to a matching Announcement (result of semantic search).
+model ClientMatch {
+  id             String            @id @default(uuid()) @db.Uuid
+  topicId        String            @db.Uuid
+  announcementId String            @db.Uuid
+  similarity     Float
+  status         ClientMatchStatus @default(NEW)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  topic        Topic        @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, announcementId])
+  @@index([topicId])
+  @@index([announcementId])
   @@index([status])
   @@map("client_matches")
 }

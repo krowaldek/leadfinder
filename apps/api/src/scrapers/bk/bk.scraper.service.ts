@@ -126,9 +126,10 @@ export class BkScraperService {
 
       const saved = await this.prisma.announcement.upsert({
         where: {
-          sourceSystem_externalId: {
+          sourceSystem_externalId_partIndex: {
             sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
             externalId: id,
+            partIndex: 0,
           },
         },
         create: upsertData,
@@ -149,7 +150,7 @@ export class BkScraperService {
       this.logger.log(`BK: saved ${id}`);
 
       try {
-        await this.normalization.processAnnouncementToItems(saved.id);
+        await this.normalization.processAnnouncement(saved.id);
       } catch (normErr) {
         const msg =
           normErr instanceof Error ? normErr.message : String(normErr);
@@ -271,9 +272,10 @@ export class BkScraperService {
         .map((u) =>
           this.prisma.announcement.update({
             where: {
-              sourceSystem_externalId: {
+              sourceSystem_externalId_partIndex: {
                 sourceSystem: AnnouncementSource.BAZA_KONKURENCYJNOSCI,
                 externalId: u.externalId,
+                partIndex: 0,
               },
             },
             data: { deadlineAt: u.deadlineAt },

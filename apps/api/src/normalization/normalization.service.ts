@@ -1,6 +1,7 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
+import { AnnouncementSource, Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.js";
 import {
   EMBEDDING_QUEUE,
@@ -38,6 +39,13 @@ interface BkRawData {
   [key: string]: unknown;
 }
 
+interface PartData {
+  title: string;
+  description: string | null;
+  searchContext: string;
+  price: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -54,25 +62,25 @@ export class NormalizationService {
   ) {}
 
   /**
-   * Przetwarza ogłoszenie na pozycje (AnnouncementItem).
+   * Processes a raw announcement into flat Announcement records.
    *
-   * Logika:
-   *  – Pobiera announcement wraz z rawData.
-   *  – Wyciąga tablicę `orders` (odpowiednik "positionLines" w BK API).
-   *  – Jeśli orders nie są puste → jeden AnnouncementItem per order.
-   *  – Jeśli orders są puste   → jeden ogólny item z tytułu ogłoszenia.
-   *  – Usuwa poprzednie items i tworzy nowe w jednej transakcji.
-   *  – Dla każdego buduje searchContext: "TYTUŁ: … | OPIS: … | KODY CPV: …"
+   * Logic:
+   *  – Reads the announcement with its rawData.
+   *  – Extracts the `orders` array from BK rawData.
+   *  – Multi-part: updates partIndex=0 row with part-0 data, creates/upserts
+   *    additional rows for each extra part.
+   *  – Single-part: updates the existing row (partIndex=0) with searchContext
+   *    built from the announcement's own title/description.
+   *  – Deletes stale part rows (partIndex >= number of parts).
+   *  – Queues EMBED_ANNOUNCEMENT for each saved part row.
    */
-  async processAnnouncementToItems(announcementId: string): Promise<void> {
+  async processAnnouncement(announcementId: string): Promise<void> {
     const announcement = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
     });
 
     if (!announcement) {
-      throw new NotFoundException(
-        `Announcement not found: ${announcementId}`,
-      );
+      throw new NotFoundException(`Announcement not found: ${announcementId}`);
     }
 
     this.logger.log(
@@ -80,58 +88,93 @@ export class NormalizationService {
     );
 
     const rawData = announcement.rawData as BkRawData;
-    const orders: BkOrder[] = Array.isArray(rawData?.orders)
-      ? rawData.orders
-      : [];
+    const orders: BkOrder[] = Array.isArray(rawData?.orders) ? rawData.orders : [];
 
-    const itemsToCreate =
+    const parts: PartData[] =
       orders.length > 0
-        ? this.buildItemsFromOrders(orders)
-        : this.buildGeneralItem(announcement.title, announcement.description);
+        ? this.buildPartsFromOrders(orders)
+        : this.buildGeneralPart(announcement.title, announcement.description);
 
     this.logger.log(
-      `Building ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
+      `Building ${parts.length} part(s) for announcement externalId=${announcement.externalId}`,
     );
 
-    // Usuń stare itemy i wstaw nowe atomowo
-    await this.prisma.$transaction([
-      this.prisma.announcementItem.deleteMany({
-        where: { announcementId },
-      }),
-      this.prisma.announcement.update({
-        where: { id: announcementId },
-        data: { detailedReport: null },
-      }),
-      this.prisma.announcementItem.createMany({
-        data: itemsToCreate.map((item, index) => ({
-          announcementId,
-          itemIndex: index,
-          title: item.title,
-          description: item.description ?? null,
-          searchContext: item.searchContext,
-          price: item.price != null ? item.price : null,
-          status: "PENDING" as const,
-        })),
-      }),
-    ]);
+    // Update the partIndex=0 row (which the scraper just upserted)
+    const [firstPart, ...remainingParts] = parts;
 
-    this.logger.log(
-      `Saved ${itemsToCreate.length} item(s) for announcement ${announcementId}`,
-    );
-
-    // Pobierz UUID zapisanych itemów i wrzuć do kolejki raportów per item
-    const savedItems = await this.prisma.announcementItem.findMany({
-      where: { announcementId },
-      select: { id: true },
-      orderBy: { itemIndex: "asc" },
+    await this.prisma.announcement.update({
+      where: { id: announcementId },
+      data: {
+        title: firstPart.title,
+        description: firstPart.description,
+        searchContext: firstPart.searchContext,
+        valueMin: firstPart.price != null ? firstPart.price : announcement.valueMin,
+        detailedReport: null, // clear stale report
+        embeddingStatus: "PENDING",
+      },
     });
 
-    for (const item of savedItems) {
+    // Create/update remaining part rows
+    const savedIds: string[] = [announcementId];
+
+    for (let i = 0; i < remainingParts.length; i++) {
+      const part = remainingParts[i];
+      const partIndex = i + 1;
+
+      const saved = await this.prisma.announcement.upsert({
+        where: {
+          sourceSystem_externalId_partIndex: {
+            sourceSystem: announcement.sourceSystem,
+            externalId: announcement.externalId,
+            partIndex,
+          },
+        },
+        create: {
+          sourceSystem: announcement.sourceSystem,
+          externalId: announcement.externalId,
+          partIndex,
+          title: part.title,
+          description: part.description,
+          url: announcement.url,
+          status: announcement.status,
+          publishedAt: announcement.publishedAt,
+          deadlineAt: announcement.deadlineAt,
+          searchContext: part.searchContext,
+          valueMin: part.price ?? null,
+          rawData: announcement.rawData ?? Prisma.JsonNull,
+          embeddingStatus: "PENDING",
+        },
+        update: {
+          title: part.title,
+          description: part.description,
+          searchContext: part.searchContext,
+          valueMin: part.price ?? null,
+          detailedReport: null,
+          embeddingStatus: "PENDING",
+        },
+        select: { id: true },
+      });
+
+      savedIds.push(saved.id);
+    }
+
+    // Remove stale part rows (if announcement shrank in number of parts)
+    await this.prisma.announcement.deleteMany({
+      where: {
+        sourceSystem: announcement.sourceSystem,
+        externalId: announcement.externalId,
+        partIndex: { gte: parts.length },
+        id: { notIn: savedIds },
+      },
+    });
+
+    // Queue embedding for every part row
+    for (const savedId of savedIds) {
       await this.embeddingQueue.add(
-        EmbeddingJob.REPORT_ITEM,
-        { itemId: item.id },
+        EmbeddingJob.EMBED_ANNOUNCEMENT,
+        { announcementId: savedId },
         {
-          jobId: `item-report-${item.id}`,
+          jobId: `announcement-embed-${savedId}`,
           attempts: 3,
           backoff: { type: "exponential", delay: 5_000 },
           removeOnComplete: { count: 100 },
@@ -141,7 +184,7 @@ export class NormalizationService {
     }
 
     this.logger.log(
-      `Enqueued ${savedItems.length} item report job(s) for announcement ${announcementId}`,
+      `Queued ${savedIds.length} embed job(s) for externalId=${announcement.externalId}`,
     );
   }
 
@@ -149,29 +192,25 @@ export class NormalizationService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private buildItemsFromOrders(orders: BkOrder[]) {
+  private buildPartsFromOrders(orders: BkOrder[]): PartData[] {
     return orders.map((order) => {
       const orderItems: BkOrderItem[] = Array.isArray(order.order_items)
         ? order.order_items
         : [];
 
-      // Łączymy opisy z wszystkich order_items danej części
       const descriptions = orderItems
         .map((oi) => oi.description)
         .filter((d): d is string => !!d && d.trim().length > 0);
 
-      // Spłaszczamy kody CPV ze wszystkich order_items
       const cpvNames = orderItems
         .flatMap((oi) => oi.cpv_items ?? [])
         .map((cpv) => `${cpv.code} ${cpv.name}`)
-        .filter((v, i, arr) => arr.indexOf(v) === i); // deduplikacja
+        .filter((v, i, arr) => arr.indexOf(v) === i);
 
       const title = order.title ?? `Część ${order.id}`;
       const description = descriptions.join("\n\n") || null;
-
       const searchContext = this.buildSearchContext(title, description, cpvNames);
 
-      // Wartość szacunkowa — najpierw z orders.estimated_value, fallback z pierwszego order_item
       const rawPrice =
         order.estimated_value ??
         orderItems.find((oi) => oi.estimated_value != null)?.estimated_value ??
@@ -186,10 +225,7 @@ export class NormalizationService {
     });
   }
 
-  private buildGeneralItem(
-    title: string,
-    description: string | null,
-  ) {
+  private buildGeneralPart(title: string, description: string | null): PartData[] {
     return [
       {
         title,
@@ -208,7 +244,6 @@ export class NormalizationService {
     const parts: string[] = [`TYTUŁ: ${title}`];
 
     if (description) {
-      // Skracamy opis do 1000 znaków żeby nie przekroczyć limitu tokenów
       const truncated =
         description.length > 1000
           ? `${description.slice(0, 1000)}…`
@@ -223,15 +258,9 @@ export class NormalizationService {
     return parts.join(" | ");
   }
 
-  /**
-   * Normalizuje wartość ceny z BK API do formatu akceptowanego przez Prisma Decimal.
-   * BK zwraca ceny jako liczby lub stringi z europejskim formatem (np. "1 234,56").
-   */
   private normalizePrice(raw: number | string): string | null {
     if (typeof raw === "number") return String(raw);
-    // Usuń spacje grupowania, zamień przecinek na kropkę
     const normalized = String(raw).replace(/\s/g, "").replace(",", ".");
-    // Walidacja: musi być parsowalna jako liczba
     if (Number.isNaN(Number(normalized))) return null;
     return normalized;
   }

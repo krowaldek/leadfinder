@@ -112,13 +112,12 @@ export class ScraperController {
   }
 
   /**
-   * Backfill: ustaw kind dla wszystkich AnnouncementItem bez klasyfikacji.
-   * Resetuje status na PENDING i kolejkuje ponowne embedding z klasyfikacją.
+   * Backfill: kolejkuje embedding dla wszystkich ogłoszeń bez embeddingu.
    */
   @Post("embedding/backfill-kind")
   @HttpCode(HttpStatus.ACCEPTED)
   async backfillKind() {
-    const queued = await this.embeddingService.backfillKind();
+    const queued = await this.embeddingService.backfillAnnouncements();
     return { queued, status: "queued" };
   }
 

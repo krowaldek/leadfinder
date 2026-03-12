@@ -26,16 +26,16 @@ const multi = await prisma.$queryRaw<AnnRow[]>`
 if (multi.length > 0) {
   const { id, title } = multi[0];
   console.log(`\n=== MULTI-PART ===\n${title}\n(${id})`);
-  await normSvc.processAnnouncementToItems(id);
-  const items = await prisma.announcementItem.findMany({
-    where: { announcementId: id },
-    orderBy: { itemIndex: "asc" },
-    select: { itemIndex: true, title: true, searchContext: true, price: true, status: true },
+  await normSvc.processAnnouncement(id);
+  const parts = await prisma.announcement.findMany({
+    where: { externalId: id },
+    orderBy: { partIndex: "asc" },
+    select: { partIndex: true, title: true, searchContext: true, embeddingStatus: true },
   });
-  items.forEach((i) => {
-    console.log(`\n[${i.itemIndex}] ${i.title.slice(0, 70)}`);
-    console.log(`  CTX: ${i.searchContext.slice(0, 130)}…`);
-    console.log(`  price: ${i.price ?? "—"} | status: ${i.status}`);
+  parts.forEach((p) => {
+    console.log(`\n[${p.partIndex}] ${p.title.slice(0, 70)}`);
+    console.log(`  CTX: ${p.searchContext.slice(0, 130)}\u2026`);
+    console.log(`  status: ${p.embeddingStatus}`);
   });
 }
 
@@ -49,14 +49,14 @@ const single = await prisma.$queryRaw<AnnRow[]>`
 if (single.length > 0) {
   const { id, title } = single[0];
   console.log(`\n\n=== SINGLE (no orders) ===\n${title}\n(${id})`);
-  await normSvc.processAnnouncementToItems(id);
-  const items = await prisma.announcementItem.findMany({
-    where: { announcementId: id },
-    select: { itemIndex: true, title: true, searchContext: true },
+  await normSvc.processAnnouncement(id);
+  const parts = await prisma.announcement.findMany({
+    where: { externalId: id },
+    select: { partIndex: true, title: true, searchContext: true },
   });
-  items.forEach((i) => {
-    console.log(`\n[${i.itemIndex}] ${i.title.slice(0, 70)}`);
-    console.log(`  CTX: ${i.searchContext.slice(0, 130)}…`);
+  parts.forEach((p) => {
+    console.log(`\n[${p.partIndex}] ${p.title.slice(0, 70)}`);
+    console.log(`  CTX: ${p.searchContext.slice(0, 130)}\u2026`);
   });
 }
 

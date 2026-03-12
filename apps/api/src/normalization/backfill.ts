@@ -1,5 +1,5 @@
 /**
- * Backfill: processAnnouncementToItems dla wszystkich istniejących ogłoszeń.
+ * Backfill: processAnnouncement dla wszystkich istniejących ogłoszeń.
  * Uruchom: node --import tsx src/normalization/backfill.ts
  */
 
@@ -29,7 +29,7 @@ async function main() {
 
   for (const a of announcements) {
     try {
-      await normalization.processAnnouncementToItems(a.id);
+      await normalization.processAnnouncement(a.id);
       ok++;
       if (ok % 10 === 0) {
         console.log(`  ✓ ${ok}/${announcements.length}`);
@@ -43,11 +43,8 @@ async function main() {
 
   console.log(`\nDone: ${ok} OK, ${fail} failed`);
 
-  const counts = await prisma.announcementItem.groupBy({
-    by: ["status"],
-    _count: { status: true },
-  });
-  console.log("Items by status:", counts.map((c) => `${c.status}: ${c._count.status}`).join(", "));
+  const total = await prisma.announcement.count();
+  console.log(`Total announcements in DB: ${total}`);
 
   await app.close();
 }
