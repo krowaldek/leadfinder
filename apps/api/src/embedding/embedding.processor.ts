@@ -2,18 +2,17 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Logger } from "@nestjs/common";
 import { Job } from "bullmq";
 import { EmbeddingService } from "./embedding.service.js";
-import { AttachmentEnrichmentService } from "./attachment-enrichment.service.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
 import { JobLoggerService } from "../logs/job-logger.service.js";
 import { PrismaService } from "../database/prisma.service.js";
-import { AnnouncementReportService } from "../announcements/announcement-report.service.js";
+import { ClientMatchingService } from "../clients/client-matching.service.js";
 
-interface EmbedItemPayload {
-  itemId: string;
+interface EmbedAnnouncementPayload {
+  announcementId: string;
 }
 
-interface AnnouncementReportPayload {
-  announcementId: string;
+interface EmbedTopicPayload {
+  topicId: string;
 }
 
 const EMBEDDING_WORKER_CONCURRENCY = Math.max(
@@ -28,10 +27,8 @@ export class EmbeddingProcessor extends WorkerHost {
   constructor(
     @Inject(EmbeddingService)
     private readonly embeddingService: EmbeddingService,
-    @Inject(AttachmentEnrichmentService)
-    private readonly enrichmentService: AttachmentEnrichmentService,
-    @Inject(AnnouncementReportService)
-    private readonly announcementReportService: AnnouncementReportService,
+    @Inject(ClientMatchingService)
+    private readonly matchingService: ClientMatchingService,
     @Inject(JobLoggerService)
     private readonly jobLogger: JobLoggerService,
     @Inject(PrismaService)
@@ -41,108 +38,58 @@ export class EmbeddingProcessor extends WorkerHost {
   }
 
   async process(job: Job): Promise<void> {
-    const { itemId, announcementId } = job.data as EmbedItemPayload & AnnouncementReportPayload;
+    const payload = job.data as EmbedAnnouncementPayload & EmbedTopicPayload;
 
-    if (job.name === EmbeddingJob.REPORT_ITEM) {
-      this.logger.debug(`Processing REPORT_ITEM for item ${itemId}`);
+    // ── EMBED_ANNOUNCEMENT ───────────────────────────────────────────────────
+    if (job.name === EmbeddingJob.EMBED_ANNOUNCEMENT) {
+      const { announcementId } = payload;
+      this.logger.debug(`Processing EMBED_ANNOUNCEMENT for ${announcementId}`);
 
-      const itemMeta = await this.prisma.announcementItem.findUnique({
-        where: { id: itemId },
-        select: {
-          title: true,
-          announcementId: true,
-          announcement: { select: { sourceSystem: true, externalId: true } },
-        },
-      });
-
-      const entityTitle = itemMeta
-        ? `[${itemMeta.announcement.sourceSystem}] ${itemMeta.title}`
-        : itemId;
-
-      const logId = await this.jobLogger.start({
-        type: "REPORT",
-        jobId: job.id,
-        jobName: job.name,
-        entityId: itemId,
-        entityTitle,
-        payload: {
-          itemId,
-          announcementId: itemMeta?.announcementId ?? null,
-          source: itemMeta?.announcement.sourceSystem ?? null,
-          externalId: itemMeta?.announcement.externalId ?? null,
-        },
-      });
-
-      try {
-        const result = await this.embeddingService.generateItemReport(itemId);
-        const queuedAnnouncementReport = await this.embeddingService.queueAnnouncementReportIfReady(
-          result.announcementId,
-        );
-        await this.jobLogger.finish({
-          logId,
-          status: "COMPLETED",
-          result: {
-            itemId,
-            announcementId: result.announcementId,
-            kind: result.kind,
-            summary: result.summary,
-            reportLength: result.detailedReport.length,
-            estimatedValue: result.estimatedValue,
-            queuedAnnouncementReport,
-          },
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.jobLogger.finish({ logId, status: "FAILED", error: message });
-        throw err;
-      }
-      return;
-    }
-
-    if (job.name === EmbeddingJob.REPORT_ANNOUNCEMENT) {
-      this.logger.debug(`Processing REPORT_ANNOUNCEMENT for announcement ${announcementId}`);
-
-      const announcementMeta = await this.prisma.announcement.findUnique({
+      const meta = await this.prisma.announcement.findUnique({
         where: { id: announcementId },
-        select: {
-          title: true,
-          sourceSystem: true,
-          externalId: true,
-        },
+        select: { title: true, sourceSystem: true, externalId: true },
       });
 
-      const entityTitle = announcementMeta
-        ? `[${announcementMeta.sourceSystem}] ${announcementMeta.title}`
+      const entityTitle = meta
+        ? `[${meta.sourceSystem}] ${meta.title}`
         : announcementId;
 
       const logId = await this.jobLogger.start({
-        type: "REPORT",
+        type: "EMBEDDING",
         jobId: job.id,
         jobName: job.name,
         entityId: announcementId,
         entityTitle,
         payload: {
           announcementId,
-          source: announcementMeta?.sourceSystem ?? null,
-          externalId: announcementMeta?.externalId ?? null,
+          source: meta?.sourceSystem ?? null,
+          externalId: meta?.externalId ?? null,
         },
       });
 
       try {
-        const report = await this.announcementReportService.generateReport(announcementId, {
-          log: false,
+        const { tokenUsage } = await this.embeddingService.generateAnnouncementEmbedding(announcementId);
+
+        const updated = await this.prisma.announcement.findUnique({
+          where: { id: announcementId },
+          select: { kind: true, detailedReport: true },
         });
-        const queuedEmbeddings = await this.embeddingService.enqueueEmbeddingJobsForAnnouncement(
-          announcementId,
-        );
+
+        // After embedding, trigger re-matching for all active topics
+        await this.matchingService.matchAllTopicsAgainstAnnouncement(announcementId);
+
         await this.jobLogger.finish({
           logId,
           status: "COMPLETED",
           result: {
             announcementId,
-            title: announcementMeta?.title ?? null,
-            reportLength: report.length,
-            queuedEmbeddings,
+            kind: updated?.kind ?? null,
+            reportLength: updated?.detailedReport?.length ?? null,
+            ...(tokenUsage ? {
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+            } : {}),
           },
         });
       } catch (err) {
@@ -153,81 +100,37 @@ export class EmbeddingProcessor extends WorkerHost {
       return;
     }
 
-    if (job.name === EmbeddingJob.EMBED_ITEM) {
-      this.logger.debug(`Processing EMBED_ITEM for item ${itemId}`);
+    // ── EMBED_TOPIC ──────────────────────────────────────────────────────────
+    if (job.name === EmbeddingJob.EMBED_TOPIC) {
+      const { topicId } = payload;
+      this.logger.debug(`Processing EMBED_TOPIC for ${topicId}`);
 
-      const itemMeta = await this.prisma.announcementItem.findUnique({
-        where: { id: itemId },
-        select: {
-          title: true,
-          kind: true,
-          announcement: { select: { sourceSystem: true, externalId: true } },
-        },
+      const meta = await this.prisma.topic.findUnique({
+        where: { id: topicId },
+        select: { title: true, project: { select: { client: { select: { companyName: true } } } } },
       });
 
-      const entityTitle = itemMeta
-        ? `[${itemMeta.announcement.sourceSystem}] ${itemMeta.title}`
-        : itemId;
+      const entityTitle = meta
+        ? `${meta.project.client.companyName} — ${meta.title}`
+        : topicId;
 
       const logId = await this.jobLogger.start({
         type: "EMBEDDING",
         jobId: job.id,
         jobName: job.name,
-        entityId: itemId,
+        entityId: topicId,
         entityTitle,
-        payload: {
-          itemId,
-          kind: itemMeta?.kind ?? null,
-          source: itemMeta?.announcement.sourceSystem ?? null,
-          externalId: itemMeta?.announcement.externalId ?? null,
-        },
+        payload: { topicId },
       });
 
       try {
-        await this.embeddingService.generateItemEmbedding(itemId);
-        const updatedItem = await this.prisma.announcementItem.findUnique({
-          where: { id: itemId },
-          select: {
-            kind: true,
-            shortSummary: true,
-            detailedReport: true,
-          },
-        });
+        await this.embeddingService.generateTopicEmbedding(topicId);
+        await this.matchingService.matchTopic(topicId);
+
         await this.jobLogger.finish({
           logId,
           status: "COMPLETED",
-          result: {
-            itemId,
-            kind: updatedItem?.kind ?? itemMeta?.kind ?? null,
-            summary: updatedItem?.shortSummary ?? null,
-            reportLength: updatedItem?.detailedReport?.length ?? null,
-          },
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.jobLogger.finish({ logId, status: "FAILED", error: message });
-        throw err;
-      }
-      return;
-    }
-
-    if (job.name === EmbeddingJob.ENRICH_ITEM) {
-      this.logger.debug(`Processing ENRICH_ITEM for item ${itemId}`);
-
-      const logId = await this.jobLogger.start({
-        type: "EMBEDDING",
-        jobId: job.id,
-        jobName: job.name,
-        entityId: itemId,
-        payload: { itemId, enrichmentType: "attachment_text" },
-      });
-
-      try {
-        await this.enrichmentService.enrichItem(itemId);
-        await this.jobLogger.finish({
-          logId,
-          status: "COMPLETED",
-          result: { itemId },
+          result: { topicId },
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

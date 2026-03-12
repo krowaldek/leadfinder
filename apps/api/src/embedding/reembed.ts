@@ -33,6 +33,7 @@ interface CliOptions {
   execute: boolean;
   limit: number | null;
   onlyEmbedded: boolean;
+  readyForEmbedOnly: boolean;
   statuses: ItemStatus[];
   sourceSystems: SourceSystem[];
   announcementIds: string[];
@@ -111,6 +112,7 @@ function parseArgs(argv: string[]): CliOptions {
     execute: args.has("execute"),
     limit,
     onlyEmbedded: args.has("only-embedded"),
+    readyForEmbedOnly: args.has("ready-for-embed-only"),
     statuses,
     sourceSystems,
     announcementIds,
@@ -174,6 +176,7 @@ async function main() {
   const needsReport = items.filter(
     (item) => !item.kind || !item.shortSummary || !item.detailedReport,
   );
+  const selectedItems = options.readyForEmbedOnly ? readyForEmbed : items;
 
   console.log(
     JSON.stringify(
@@ -181,6 +184,7 @@ async function main() {
         mode: options.mode,
         execute: options.execute,
         onlyEmbedded: options.onlyEmbedded,
+        readyForEmbedOnly: options.readyForEmbedOnly,
         selectors: {
           statuses: options.statuses,
           sourceSystems: options.sourceSystems,
@@ -188,10 +192,13 @@ async function main() {
           itemIds: options.itemIds,
           limit: options.limit,
         },
-        selectedItems: items.length,
-        queueReportJobs: needsReport.length,
-        queueEmbedJobs: readyForEmbed.length,
-        sample: items.slice(0, 5).map((item) => ({
+        selectedItems: selectedItems.length,
+        queueReportJobs: options.readyForEmbedOnly ? 0 : needsReport.length,
+        queueEmbedJobs: selectedItems.filter(
+          (item) => item.kind && item.shortSummary && item.detailedReport,
+        ).length,
+        skippedMissingReportItems: options.readyForEmbedOnly ? needsReport.length : 0,
+        sample: selectedItems.slice(0, 5).map((item) => ({
           itemId: item.id,
           itemStatus: item.status,
           sourceSystem: item.announcement.sourceSystem,
@@ -217,7 +224,7 @@ async function main() {
   const runId = Date.now();
   let queued = 0;
 
-  for (const item of items) {
+  for (const item of selectedItems) {
     const jobName =
       item.kind && item.shortSummary && item.detailedReport
         ? EmbeddingJob.EMBED_ITEM
