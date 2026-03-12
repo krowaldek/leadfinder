@@ -78,11 +78,14 @@ export function ClientPromptPage() {
       }
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     },
-    onError: () => {
-      toast.error("Błąd komunikacji z asystentem");
+    onError: (err: unknown) => {
+      const apiMessage =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const label = apiMessage ?? "Błąd komunikacji z asystentem";
+      toast.error(label);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: "Przepraszam, wystąpił błąd. Spróbuj ponownie." },
+        { role: "assistant", text: `⚠️ ${label}` },
       ]);
     },
   });

@@ -5,8 +5,8 @@ import { pl } from "date-fns/locale";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search, Info, FileText } from "lucide-react";
 import { DataTable, type ColumnDef } from "../../../components/data-table";
-import type { ClientMatchResponse } from "@leadfinder/contracts";
-import { fetchClients, fetchClientMatches, updateMatchStatus } from "./clients-api";
+import { type ClientMatchResponse } from "@leadfinder/contracts";
+import { fetchClients, fetchClientMatches, fetchProjects, fetchTopics, rematchClient, updateMatchStatus } from "./clients-api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -41,42 +41,18 @@ const KIND_LABELS: Record<string, string> = {
 type SortCol = "title" | "similarity" | "deadlineAt" | "publishedAt";
 type SortDir = "asc" | "desc";
 
-function SortIcon({
-  col,
-  sortCol,
-  sortDir,
-}: {
-  col: SortCol;
-  sortCol: SortCol;
-  sortDir: SortDir;
-}) {
+function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; sortDir: SortDir }) {
   if (sortCol !== col) return <ArrowUpDown className="ml-1 inline size-3.5 opacity-40" />;
-  return sortDir === "asc" ? (
-    <ArrowUp className="ml-1 inline size-3.5" />
-  ) : (
-    <ArrowDown className="ml-1 inline size-3.5" />
-  );
+  return sortDir === "asc" ? <ArrowUp className="ml-1 inline size-3.5" /> : <ArrowDown className="ml-1 inline size-3.5" />;
 }
 
 function SortHeader({
-  col,
-  label,
-  sortCol,
-  sortDir,
-  onToggle,
+  col, label, sortCol, sortDir, onToggle,
 }: {
-  col: SortCol;
-  label: string;
-  sortCol: SortCol;
-  sortDir: SortDir;
-  onToggle: (col: SortCol) => void;
+  col: SortCol; label: string; sortCol: SortCol; sortDir: SortDir; onToggle: (col: SortCol) => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => onToggle(col)}
-      className="flex items-center text-xs font-medium hover:text-foreground"
-    >
+    <button type="button" onClick={() => onToggle(col)} className="flex items-center text-xs font-medium hover:text-foreground">
       {label}
       <SortIcon col={col} sortCol={sortCol} sortDir={sortDir} />
     </button>
@@ -87,6 +63,8 @@ function SortHeader({
 
 export function ClientMatchesPage() {
   const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [selectedTopicId, setSelectedTopicId] = useState<string>("");
   const [sortCol, setSortCol] = useState<SortCol>("deadlineAt");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [hideDismissed, setHideDismissed] = useState(true);
@@ -99,6 +77,18 @@ export function ClientMatchesPage() {
   const clientsQuery = useQuery({
     queryKey: ["clients", 1, 200],
     queryFn: () => fetchClients(1, 200),
+  });
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects", selectedClientId],
+    queryFn: () => fetchProjects(selectedClientId),
+    enabled: !!selectedClientId,
+  });
+
+  const topicsQuery = useQuery({
+    queryKey: ["topics", selectedClientId, selectedProjectId],
+    queryFn: () => fetchTopics(selectedClientId, selectedProjectId),
+    enabled: !!selectedClientId && !!selectedProjectId,
   });
 
   const matchesQuery = useQuery({
@@ -121,6 +111,15 @@ export function ClientMatchesPage() {
     onError: () => toast.error("Błąd aktualizacji statusu"),
   });
 
+  const rematchMutation = useMutation({
+    mutationFn: (clientId: string) => rematchClient(clientId),
+    onSuccess: (_, clientId) => {
+      toast.success("Przeliczenie dopasowań zakolejkowane");
+      void queryClient.invalidateQueries({ queryKey: ["client-matches", clientId] });
+    },
+    onError: () => toast.error("Nie udało się zakolejkować przeliczenia dopasowań"),
+  });
+
   function toggleSort(col: SortCol) {
     if (sortCol === col) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -131,21 +130,30 @@ export function ClientMatchesPage() {
   }
 
   const allMatches = matchesQuery.data?.data ?? [];
-  const clientEmbeddingText = matchesQuery.data?.clientEmbeddingText ?? matchesQuery.data?.clientProfileSummary;
-  const total = matchesQuery.data?.meta.total ?? 0;
-  const shortlisted = allMatches.filter((m) => m.status === "SHORTLISTED").length;
-  const dismissed = allMatches.filter((m) => m.status === "DISMISSED").length;
+  const projects = projectsQuery.data?.data ?? [];
+  const topics = topicsQuery.data?.data ?? [];
+  const clients = clientsQuery.data?.data ?? [];
+
+  // filtered by project/topic before sorting
+  const filteredByScope = useMemo(() => {
+    let rows = allMatches;
+    if (selectedProjectId) rows = rows.filter((m) => m.topic.projectId === selectedProjectId);
+    if (selectedTopicId) rows = rows.filter((m) => m.topic.id === selectedTopicId);
+    return rows;
+  }, [allMatches, selectedProjectId, selectedTopicId]);
+
+  const total = filteredByScope.length;
+  const shortlisted = filteredByScope.filter((m) => m.status === "SHORTLISTED").length;
+  const dismissed = filteredByScope.filter((m) => m.status === "DISMISSED").length;
 
   const displayedMatches = useMemo(() => {
-    let rows = hideDismissed
-      ? allMatches.filter((m) => m.status !== "DISMISSED")
-      : allMatches;
+    let rows = hideDismissed ? filteredByScope.filter((m) => m.status !== "DISMISSED") : filteredByScope;
 
     if (hideExpired) {
       const now = new Date();
       rows = rows.filter((m) => {
-        const d = m.announcementItem.announcement.deadlineAt;
-        if (!d) return true; // brak terminu — zostaw
+        const d = m.announcement.deadlineAt;
+        if (!d) return true;
         return new Date(d) > now;
       });
     }
@@ -154,8 +162,8 @@ export function ClientMatchesPage() {
       const q = search.trim().toLowerCase();
       rows = rows.filter(
         (m) =>
-          m.announcementItem.title.toLowerCase().includes(q) ||
-          (m.announcementItem.description ?? "").toLowerCase().includes(q),
+          m.announcement.title.toLowerCase().includes(q) ||
+          (m.announcement.description ?? "").toLowerCase().includes(q),
       );
     }
 
@@ -163,9 +171,8 @@ export function ClientMatchesPage() {
       let cmp = 0;
 
       if (sortCol === "deadlineAt") {
-        const da = a.announcementItem.announcement.deadlineAt ?? "";
-        const db = b.announcementItem.announcement.deadlineAt ?? "";
-        // Rekordy bez terminu idą na koniec zawsze
+        const da = a.announcement.deadlineAt ?? "";
+        const db = b.announcement.deadlineAt ?? "";
         if (!da && !db) cmp = 0;
         else if (!da) return 1;
         else if (!db) return -1;
@@ -173,21 +180,20 @@ export function ClientMatchesPage() {
       } else if (sortCol === "similarity") {
         cmp = a.similarity - b.similarity;
       } else if (sortCol === "title") {
-        cmp = a.announcementItem.title.localeCompare(b.announcementItem.title, "pl");
+        cmp = a.announcement.title.localeCompare(b.announcement.title, "pl");
       } else if (sortCol === "publishedAt") {
-        const da = a.announcementItem.announcement.publishedAt ?? "";
-        const db = b.announcementItem.announcement.publishedAt ?? "";
+        const da = a.announcement.publishedAt ?? "";
+        const db = b.announcement.publishedAt ?? "";
         cmp = da.localeCompare(db);
       }
 
-      // Drugorzędne sortowanie po similarity desc gdy col != similarity
       if (cmp === 0 && sortCol !== "similarity") {
         cmp = b.similarity - a.similarity;
       }
 
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [allMatches, hideDismissed, hideExpired, search, sortCol, sortDir]);
+  }, [filteredByScope, hideDismissed, hideExpired, search, sortCol, sortDir]);
 
   // ── Columns ─────────────────────────────────────────────────────────────────
 
@@ -197,31 +203,23 @@ export function ClientMatchesPage() {
       header: (
         <SortHeader col="title" label="Ogłoszenie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
       ),
-      cell: ({ row }) => {
-        const item = row.announcementItem as { title: string; description?: string | null; shortSummary?: string | null };
-        return (
-          <div className="max-w-sm">
-            <p className="line-clamp-2 text-sm font-medium leading-snug">
-              {item.title}
-            </p>
-            {item.shortSummary ? (
-              <p className="mt-0.5 line-clamp-1 text-xs text-primary/70 font-medium">
-                {item.shortSummary}
-              </p>
-            ) : item.description ? (
-              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                {item.description}
-              </p>
-            ) : null}
-          </div>
-        );
-      },
+      cell: ({ row }) => (
+        <div className="max-w-sm">
+          <p className="line-clamp-2 text-sm font-medium leading-snug">{row.announcement.title}</p>
+          {row.announcement.description ? (
+            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{row.announcement.description}</p>
+          ) : null}
+          <p className="mt-0.5 text-xs text-primary/60">
+            {row.topic.projectName} › {row.topic.title}
+          </p>
+        </div>
+      ),
     },
     {
       id: "kind",
       header: "Rodzaj",
       cell: ({ row }) => {
-        const kind = (row.announcementItem as { kind?: string | null }).kind;
+        const kind = row.announcement.kind;
         return kind ? (
           <Badge variant="outline" className="whitespace-nowrap text-xs">
             {KIND_LABELS[kind] ?? kind}
@@ -235,15 +233,11 @@ export function ClientMatchesPage() {
       id: "llmValue",
       header: "Wartość (LLM)",
       cell: ({ row }) => {
-        const val = (row.announcementItem as { llmEstimatedValue?: string | null }).llmEstimatedValue;
+        const val = row.announcement.llmEstimatedValue;
         if (!val) return <span className="text-xs text-muted-foreground">—</span>;
         return (
           <span className="text-sm font-medium tabular-nums whitespace-nowrap">
-            {Number(val).toLocaleString("pl-PL", {
-              style: "currency",
-              currency: "PLN",
-              maximumFractionDigits: 0,
-            })}
+            {Number(val).toLocaleString("pl-PL", { style: "currency", currency: "PLN", maximumFractionDigits: 0 })}
           </span>
         );
       },
@@ -254,7 +248,7 @@ export function ClientMatchesPage() {
         <SortHeader col="deadlineAt" label="Termin składania" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
       ),
       cell: ({ row }) => {
-        const d = row.announcementItem.announcement.deadlineAt;
+        const d = row.announcement.deadlineAt;
         if (!d) return <span className="text-xs text-muted-foreground">—</span>;
         const date = new Date(d);
         const now = new Date();
@@ -269,11 +263,7 @@ export function ClientMatchesPage() {
             </p>
             <p className={cn("text-xs", urgent && "text-yellow-600 dark:text-yellow-400", past ? "text-muted-foreground" : "text-muted-foreground")}>
               {format(date, "HH:mm")}
-              {past
-                ? " · po terminie"
-                : urgent
-                  ? ` · za ${diffDays} ${diffDays === 1 ? "dzień" : "dni"}`
-                  : ` · za ${diffDays} dni`}
+              {past ? " · po terminie" : urgent ? ` · za ${diffDays} ${diffDays === 1 ? "dzień" : "dni"}` : ` · za ${diffDays} dni`}
             </p>
           </div>
         );
@@ -290,10 +280,7 @@ export function ClientMatchesPage() {
           <div className="flex items-center gap-2">
             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
               <div
-                className={cn(
-                  "h-full rounded-full",
-                  pct >= 70 ? "bg-green-500" : pct >= 50 ? "bg-yellow-500" : "bg-muted-foreground/40",
-                )}
+                className={cn("h-full rounded-full", pct >= 70 ? "bg-green-500" : pct >= 50 ? "bg-yellow-500" : "bg-muted-foreground/40")}
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -336,19 +323,17 @@ export function ClientMatchesPage() {
             className="h-7 w-7 p-0"
             title="Raport analityczny"
             onClick={() => {
-              const ann = row.announcementItem.announcement;
-              const itemReport = (row.announcementItem as { detailedReport?: string | null }).detailedReport ?? null;
               setReportTarget({
-                id: ann.id,
-                title: `${ann.title} — ${row.announcementItem.title}`,
-                detailedReport: itemReport ?? ann.detailedReport,
+                id: row.announcement.id,
+                title: row.announcement.title,
+                detailedReport: row.announcement.detailedReport ?? null,
               } as unknown as Announcement);
             }}
           >
             <FileText className="size-3.5" />
           </Button>
           <a
-            href={row.announcementItem.announcement.url}
+            href={row.announcement.url}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
@@ -359,8 +344,6 @@ export function ClientMatchesPage() {
       ),
     },
   ];
-
-  const clients = clientsQuery.data?.data ?? [];
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -377,6 +360,8 @@ export function ClientMatchesPage() {
             value={selectedClientId}
             onChange={(e) => {
               setSelectedClientId(e.target.value);
+              setSelectedProjectId("");
+              setSelectedTopicId("");
               setSearch("");
             }}
             className="flex h-8 min-w-[260px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -387,6 +372,47 @@ export function ClientMatchesPage() {
             ))}
           </select>
         </div>
+
+        {selectedClientId && (
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="project-select" className="text-xs font-medium text-muted-foreground">
+              Projekt
+            </label>
+            <select
+              id="project-select"
+              value={selectedProjectId}
+              onChange={(e) => {
+                setSelectedProjectId(e.target.value);
+                setSelectedTopicId("");
+              }}
+              className="flex h-8 min-w-[220px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <option value="">— wszystkie projekty —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {selectedClientId && selectedProjectId && (
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="topic-select" className="text-xs font-medium text-muted-foreground">
+              Temat
+            </label>
+            <select
+              id="topic-select"
+              value={selectedTopicId}
+              onChange={(e) => setSelectedTopicId(e.target.value)}
+              className="flex h-8 min-w-[200px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <option value="">— wszystkie tematy —</option>
+              {topics.map((t) => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {selectedClientId && (
           <div className="relative">
@@ -400,23 +426,24 @@ export function ClientMatchesPage() {
           </div>
         )}
 
+        {selectedClientId && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={rematchMutation.isPending}
+            onClick={() => rematchMutation.mutate(selectedClientId)}
+          >
+            {rematchMutation.isPending ? "Kolejkowanie…" : "Przelicz dopasowania"}
+          </Button>
+        )}
+
         <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={hideDismissed}
-            onChange={(e) => setHideDismissed(e.target.checked)}
-            className="size-4 accent-primary"
-          />
+          <input type="checkbox" checked={hideDismissed} onChange={(e) => setHideDismissed(e.target.checked)} className="size-4 accent-primary" />
           Ukryj odrzucone
         </label>
 
         <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={hideExpired}
-            onChange={(e) => setHideExpired(e.target.checked)}
-            className="size-4 accent-primary"
-          />
+          <input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} className="size-4 accent-primary" />
           Ukryj po terminie
         </label>
       </div>
@@ -468,14 +495,13 @@ export function ClientMatchesPage() {
                   title: "Brak dopasowań",
                   description: hideDismissed
                     ? "Brak wynikow - odznacz filtr 'Ukryj odrzucone', aby zobaczyc wszystkie."
-                    : "Ten klient nie ma jeszcze żadnych dopasowań.",
+                    : "Ten klient nie ma jeszcze żadnych dopasowań. Dodaj projekt i temat, aby zacząć.",
                 }
         }
       />
 
       <MatchDetailSheet
         match={detailMatch}
-        clientEmbeddingText={clientEmbeddingText}
         open={!!detailMatch}
         onOpenChange={(open) => { if (!open) setDetailMatch(null); }}
       />
@@ -485,8 +511,9 @@ export function ClientMatchesPage() {
         open={!!reportTarget}
         onClose={() => setReportTarget(null)}
         allowGeneration={false}
-        emptyStateMessage="Dla tej pozycji nie ma jeszcze raportu itemu używanego do embeddingu. Ten widok nie generuje osobnego raportu ogłoszenia, żeby nie dublować kosztu analizy."
+        emptyStateMessage="Brak raportu dla tego ogłoszenia."
       />
     </div>
   );
 }
+

@@ -8,18 +8,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Copy, Check, ExternalLink } from "lucide-react";
+import { Copy, Check, ExternalLink, Loader2 } from "lucide-react";
 import { useState, useCallback, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { type Announcement, type AnnouncementSource, type AnnouncementStatus } from "@leadfinder/contracts";
+import { fetchAnnouncement } from "@/features/announcements/announcements-api";
 
 // ---------------------------------------------------------------------------
 // JSON syntax highlighter
 // ---------------------------------------------------------------------------
 
 function highlightJson(data: unknown): string {
+  if (data === undefined || data === null) return '<span class="text-muted-foreground">null</span>';
   const json = JSON.stringify(data, null, 2);
-  const escaped = json.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escaped = (json ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return escaped.replace(
     /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(?:\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
     (match) => {
@@ -73,13 +76,23 @@ interface RawDataDialogProps {
 export function RawDataDialog({ announcement, open, onClose }: RawDataDialogProps) {
   const [copied, setCopied] = useState(false);
 
+  const detailQuery = useQuery({
+    queryKey: ["announcement", announcement?.id],
+    queryFn: () => fetchAnnouncement(announcement!.id),
+    enabled: !!announcement?.id && open,
+    staleTime: 5 * 60 * 1000,
+    select: (res) => res.data,
+  });
+
+  const full = detailQuery.data ?? announcement;
+
   const handleCopy = useCallback(() => {
-    if (!announcement) return;
-    void navigator.clipboard.writeText(JSON.stringify(announcement.rawData, null, 2)).then(() => {
+    if (!full) return;
+    void navigator.clipboard.writeText(JSON.stringify(full.rawData, null, 2)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  }, [announcement]);
+  }, [full]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -97,96 +110,102 @@ export function RawDataDialog({ announcement, open, onClose }: RawDataDialogProp
               </DialogTitle>
             </DialogHeader>
 
-            <ScrollArea className="flex-1">
-              <div className="px-6 py-4 space-y-6">
-                {/* Key parameters */}
-                <section>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Kluczowe parametry
-                  </p>
-                  <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <MetaRow label="Źródło">{SOURCE_LABELS[announcement.sourceSystem]}</MetaRow>
-                    <MetaRow label="Status">{STATUS_LABELS[announcement.status]}</MetaRow>
-                    <MetaRow label="Termin składania ofert">
-                      {announcement.deadlineAt
-                        ? format(new Date(announcement.deadlineAt), "dd.MM.yyyy HH:mm")
-                        : "—"}
-                    </MetaRow>
-                    <MetaRow label="Data publikacji">
-                      {announcement.publishedAt
-                        ? format(new Date(announcement.publishedAt), "dd.MM.yyyy")
-                        : "—"}
-                    </MetaRow>
-                    <MetaRow label="Data dodania">
-                      {format(new Date(announcement.createdAt), "dd.MM.yyyy HH:mm")}
-                    </MetaRow>
-                    <MetaRow label="Szacowana wartość">
-                      {announcement.valueMin || announcement.valueMax ? (
-                        <span>
-                          {announcement.valueMin
-                            ? Number(announcement.valueMin).toLocaleString("pl-PL", {
-                                style: "currency",
-                                currency: "PLN",
-                                maximumFractionDigits: 0,
-                              })
-                            : "?"}
-                          {announcement.valueMax && announcement.valueMax !== announcement.valueMin
-                            ? ` – ${Number(announcement.valueMax).toLocaleString("pl-PL", {
-                                style: "currency",
-                                currency: "PLN",
-                                maximumFractionDigits: 0,
-                              })}`
-                            : null}
-                        </span>
-                      ) : "—"}
-                    </MetaRow>
-                  </dl>
-
-                  {announcement.description && (
-                    <div className="mt-4">
-                      <dt className="mb-1 text-xs font-medium text-muted-foreground">Opis</dt>
-                      <p className="text-sm leading-relaxed text-foreground">{announcement.description}</p>
-                    </div>
-                  )}
-
-                  <div className="mt-4">
-                    <a
-                      href={announcement.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 text-sm underline-offset-4 hover:underline text-primary"
-                    >
-                      <ExternalLink className="size-4" />
-                      Otwórz ogłoszenie w serwisie źródłowym
-                    </a>
-                  </div>
-                </section>
-
-                <Separator />
-
-                {/* Raw JSON */}
-                <section>
-                  <div className="mb-3 flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Dane surowe (JSON)
-                    </p>
-                    <Button variant="outline" size="xs" onClick={handleCopy}>
-                      {copied ? (
-                        <><Check className="size-3 text-green-500" /> Skopiowano</>
-                      ) : (
-                        <><Copy className="size-3" /> Kopiuj JSON</>
-                      )}
-                    </Button>
-                  </div>
-                  <div className="overflow-x-auto rounded-lg border bg-zinc-950 px-4 py-3">
-                    <pre
-                      className="text-xs leading-relaxed font-mono text-zinc-300"
-                      dangerouslySetInnerHTML={{ __html: highlightJson(announcement.rawData) }}
-                    />
-                  </div>
-                </section>
+            {detailQuery.isLoading ? (
+              <div className="flex flex-1 items-center justify-center">
+                <Loader2 className="size-6 animate-spin text-muted-foreground" />
               </div>
-            </ScrollArea>
+            ) : (
+              <ScrollArea className="flex-1 min-h-0">
+                <div className="px-6 py-4 space-y-6">
+                  {/* Key parameters */}
+                  <section>
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Kluczowe parametry
+                    </p>
+                    <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <MetaRow label="Źródło">{SOURCE_LABELS[full!.sourceSystem]}</MetaRow>
+                      <MetaRow label="Status">{STATUS_LABELS[full!.status]}</MetaRow>
+                      <MetaRow label="Termin składania ofert">
+                        {full!.deadlineAt
+                          ? format(new Date(full!.deadlineAt), "dd.MM.yyyy HH:mm")
+                          : "—"}
+                      </MetaRow>
+                      <MetaRow label="Data publikacji">
+                        {full!.publishedAt
+                          ? format(new Date(full!.publishedAt), "dd.MM.yyyy")
+                          : "—"}
+                      </MetaRow>
+                      <MetaRow label="Data dodania">
+                        {format(new Date(full!.createdAt), "dd.MM.yyyy HH:mm")}
+                      </MetaRow>
+                      <MetaRow label="Szacowana wartość">
+                        {full!.valueMin || full!.valueMax ? (
+                          <span>
+                            {full!.valueMin
+                              ? Number(full!.valueMin).toLocaleString("pl-PL", {
+                                  style: "currency",
+                                  currency: "PLN",
+                                  maximumFractionDigits: 0,
+                                })
+                              : "?"}
+                            {full!.valueMax && full!.valueMax !== full!.valueMin
+                              ? ` – ${Number(full!.valueMax).toLocaleString("pl-PL", {
+                                  style: "currency",
+                                  currency: "PLN",
+                                  maximumFractionDigits: 0,
+                                })}`
+                              : null}
+                          </span>
+                        ) : "—"}
+                      </MetaRow>
+                    </dl>
+
+                    {full!.description && (
+                      <div className="mt-4">
+                        <dt className="mb-1 text-xs font-medium text-muted-foreground">Opis</dt>
+                        <p className="text-sm leading-relaxed text-foreground">{full!.description}</p>
+                      </div>
+                    )}
+
+                    <div className="mt-4">
+                      <a
+                        href={full!.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 text-sm underline-offset-4 hover:underline text-primary"
+                      >
+                        <ExternalLink className="size-4" />
+                        Otwórz ogłoszenie w serwisie źródłowym
+                      </a>
+                    </div>
+                  </section>
+
+                  <Separator />
+
+                  {/* Raw JSON */}
+                  <section>
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Dane surowe (JSON)
+                      </p>
+                      <Button variant="outline" size="xs" onClick={handleCopy}>
+                        {copied ? (
+                          <><Check className="size-3 text-green-500" /> Skopiowano</>
+                        ) : (
+                          <><Copy className="size-3" /> Kopiuj JSON</>
+                        )}
+                      </Button>
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border bg-zinc-950 px-4 py-3">
+                      <pre
+                        className="text-xs leading-relaxed font-mono text-zinc-300"
+                        dangerouslySetInnerHTML={{ __html: highlightJson(full!.rawData) }}
+                      />
+                    </div>
+                  </section>
+                </div>
+              </ScrollArea>
+            )}
           </>
         )}
       </DialogContent>

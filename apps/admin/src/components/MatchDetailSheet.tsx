@@ -103,31 +103,25 @@ function SimilarityBar({ similarity }: { similarity: number }) {
 
 interface Props {
   match: ClientMatchResponse | null;
-  clientEmbeddingText?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChange }: Props) {
+export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
   if (!match) return null;
 
-  const item = match.announcementItem;
-  const ann = item.announcement;
-  const sc = (item as { searchContext?: string }).searchContext;
-  const kind = (item as { kind?: string | null }).kind;
-  const shortSummary = (item as { shortSummary?: string | null }).shortSummary;
-  const detailedReport = (item as { detailedReport?: string | null }).detailedReport;
-  const llmEstimatedValue = (item as { llmEstimatedValue?: string | null }).llmEstimatedValue;
-  const parsedCtx = sc ? parseSearchContext(sc) : null;
+  const ann = match.announcement;
+  const topic = match.topic;
+  const parsedCtx = ann.searchContext ? parseSearchContext(ann.searchContext) : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-xl">
         <SheetHeader className="px-6 pb-4 pt-6">
-          <SheetTitle className="text-base leading-snug">{item.title}</SheetTitle>
+          <SheetTitle className="text-base leading-snug">{ann.title}</SheetTitle>
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            {kind && (
-              <Badge variant="outline" className="text-xs">{KIND_LABELS[kind] ?? kind}</Badge>
+            {ann.kind && (
+              <Badge variant="outline" className="text-xs">{KIND_LABELS[ann.kind] ?? ann.kind}</Badge>
             )}
             <Badge variant="secondary" className="text-xs">
               {SOURCE_LABELS[ann.sourceSystem] ?? ann.sourceSystem}
@@ -148,25 +142,27 @@ export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChang
 
         <div className="grid gap-6 px-6 py-5">
 
-          {/* Podsumowanie LLM */}
-          {(shortSummary || llmEstimatedValue) && (
+          {/* Temat dopasowania */}
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Temat dopasowania</p>
+            <p className="mt-0.5 text-sm font-medium">{topic.title}</p>
+            <p className="text-xs text-muted-foreground">{topic.projectName}</p>
+          </div>
+
+          {/* Wartość LLM */}
+          {ann.llmEstimatedValue && (
             <>
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 grid gap-1.5">
-                {shortSummary && (
-                  <p className="text-sm font-medium text-foreground">{shortSummary}</p>
-                )}
-                {llmEstimatedValue && (
-                  <p className="text-xs text-muted-foreground">
-                    Wartość szacunkowa (LLM):{" "}
-                    <span className="font-semibold text-foreground">
-                      {Number(llmEstimatedValue).toLocaleString("pl-PL", {
-                        style: "currency",
-                        currency: "PLN",
-                        maximumFractionDigits: 0,
-                      })}
-                    </span>
-                  </p>
-                )}
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Wartość szacunkowa (LLM):{" "}
+                  <span className="font-semibold text-foreground">
+                    {Number(ann.llmEstimatedValue).toLocaleString("pl-PL", {
+                      style: "currency",
+                      currency: "PLN",
+                      maximumFractionDigits: 0,
+                    })}
+                  </span>
+                </p>
               </div>
               <Separator />
             </>
@@ -200,15 +196,15 @@ export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChang
             </>
           )}
 
-          {detailedReport ? (
+          {ann.detailedReport ? (
             <>
-              <Section title="Raport pozycji użyty do embeddingu">
+              <Section title="Raport ogłoszenia (użyty do embeddingu)">
                 <p className="mb-1 text-xs text-muted-foreground">
-                  To jest raport części / itemu. W nowym pipeline to ten tekst jest głównym wejściem do wektoryzacji.
+                  Ten raport jest głównym wejściem do wektoryzacji ogłoszenia.
                 </p>
                 <div className="rounded-lg border bg-muted/40 p-3">
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-                    {detailedReport}
+                    {ann.detailedReport}
                   </p>
                 </div>
               </Section>
@@ -216,26 +212,10 @@ export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChang
             </>
           ) : (
             <>
-              <Section title="Raport pozycji użyty do embeddingu">
+              <Section title="Raport ogłoszenia (użyty do embeddingu)">
                 <p className="text-xs text-muted-foreground">
-                  Dla tej pozycji nie ma jeszcze raportu itemu. To zwykle oznacza starszy embedding z poprzedniego pipeline'u,
-                  zanim przeszliśmy na report-first.
+                  Brak raportu dla tego ogłoszenia. Embedding mógł być wygenerowany bez pełnej analizy.
                 </p>
-              </Section>
-              <Separator />
-            </>
-          )}
-
-          {/* Tekst klienta */}
-          {clientEmbeddingText && (
-            <>
-              <Section title="Tekst klienta użyty do embeddingu">
-                <p className="mb-1 text-xs text-muted-foreground">
-                  To jest aktualny tekst klienta, z którego powstał wektor porównywany z pozycjami ogłoszeń.
-                </p>
-                <div className="rounded-lg border bg-muted/40 p-3">
-                  <p className="text-sm leading-relaxed">{clientEmbeddingText}</p>
-                </div>
               </Section>
               <Separator />
             </>
@@ -268,18 +248,12 @@ export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChang
                   }
                 />
               )}
-              {item.price && (
-                <Field
-                  label="Cena pozycji"
-                  value={`${Number(item.price).toLocaleString("pl-PL")} PLN`}
-                />
-              )}
-              {llmEstimatedValue && (
+              {ann.llmEstimatedValue && (
                 <Field
                   label="Wartość (LLM)"
                   value={
                     <span className="font-semibold">
-                      {Number(llmEstimatedValue).toLocaleString("pl-PL", {
+                      {Number(ann.llmEstimatedValue).toLocaleString("pl-PL", {
                         style: "currency",
                         currency: "PLN",
                         maximumFractionDigits: 0,
@@ -293,12 +267,12 @@ export function MatchDetailSheet({ match, clientEmbeddingText, open, onOpenChang
           </Section>
 
           {/* Pełny opis */}
-          {item.description && (
+          {ann.description && (
             <>
               <Separator />
-              <Section title="Pełny opis pozycji">
+              <Section title="Pełny opis ogłoszenia">
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-                  {item.description}
+                  {ann.description}
                 </p>
               </Section>
             </>
