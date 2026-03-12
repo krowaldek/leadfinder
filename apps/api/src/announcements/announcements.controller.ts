@@ -36,11 +36,11 @@ export class AnnouncementsController {
     };
   }
 
-  /** Generuje (lub regeneruje) pełny raport analityczny. Może trwać kilkanaście sekund. */
+  /** Generates (or regenerates) the detailed analytical report for an announcement. */
   @Post(":id/report")
   @HttpCode(200)
   async generateReport(@Param("id") id: string) {
-    const report = await this.reportService.generateReport(id);
-    return { data: { detailedReport: report } };
+    const detailedReport = await this.reportService.generateReport(id);
+    return { data: { detailedReport } };
   }
 }
