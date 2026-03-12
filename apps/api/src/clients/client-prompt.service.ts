@@ -3,6 +3,8 @@ import {
   Inject,
   Logger,
   OnModuleDestroy,
+  ServiceUnavailableException,
+  InternalServerErrorException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ChatOpenAI } from "@langchain/openai";
@@ -73,6 +75,31 @@ export class ClientPromptService implements OnModuleDestroy {
   }
 
   async processMessage(
+    sessionId: string | undefined,
+    userMessage: string,
+  ): Promise<
+    | { status: "question"; sessionId: string; question: string; collectedData: CollectedFields }
+    | { status: "created"; client: ReturnType<ClientsService["serializeClient"]>; matchCount: number }
+  > {
+    try {
+      return await this._processMessage(sessionId, userMessage);
+    } catch (err: unknown) {
+      const e = err as Error & { status?: number; statusCode?: number };
+      const httpStatus = e?.status ?? e?.statusCode;
+
+      if (httpStatus === 429 || e?.message?.includes("exceeded your current quota") || e?.message?.includes("Rate limit")) {
+        this.logger.warn("OpenAI quota/rate-limit exceeded", e.message);
+        throw new ServiceUnavailableException(
+          "Usługa AI jest chwilowo niedostępna (limit zapytań). Spróbuj za chwilę lub sprawdź konfigurację klucza API.",
+        );
+      }
+
+      this.logger.error("processMessage failed", e instanceof Error ? e.stack : String(e));
+      throw new InternalServerErrorException("Błąd przetwarzania wiadomości.");
+    }
+  }
+
+  private async _processMessage(
     sessionId: string | undefined,
     userMessage: string,
   ): Promise<
@@ -153,8 +180,8 @@ export class ClientPromptService implements OnModuleDestroy {
 
       // Delete session and create client
       await this.redis.del(`${SESSION_PREFIX}${sid}`);
-      const { client, matchCount } = await this.clientsService.createFromProfile(profile);
-      return { status: "created", client, matchCount };
+      const client = await this.clientsService.createClient(profile);
+      return { status: "created", client, matchCount: 0 };
     }
 
     return {

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -11,6 +12,8 @@ import {
   Logger,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../common/jwt-auth.guard.js";
 import { RolesGuard } from "../common/roles.guard.js";
@@ -22,9 +25,19 @@ import {
   promptRequestSchema,
   updateMatchStatusSchema,
   updateClientSchema,
+  createProjectSchema,
+  updateProjectSchema,
+  createTopicSchema,
+  updateTopicSchema,
+  onboardRequestSchema,
   type PromptRequest,
   type UpdateMatchStatus,
   type UpdateClient,
+  type CreateProject,
+  type UpdateProject,
+  type CreateTopic,
+  type UpdateTopic,
+  type OnboardRequest,
 } from "@leadfinder/contracts";
 
 @Controller("clients")
@@ -39,14 +52,44 @@ export class ClientsController {
 
   /**
    * Conversational endpoint — no auth required.
-   * Admin panel sends JWT anyway; future portal users won't have one.
-   * TODO: add user ownership when portal auth is implemented.
+  /**
+   * Public onboarding endpoint — no JWT required.
+   * Accepts activity description + email, creates client + project + topic.
    */
+  @Post("onboard")
+  async onboard(
+    @Body(new ZodValidationPipe(onboardRequestSchema)) body: OnboardRequest,
+  ) {
+    const result = await this.clientsService.onboard(body.activity, body.email);
+    return result;
+  }
+
+  /** Legacy chat-based prompt endpoint — kept for backward compat */
   @Post("prompt")
   async prompt(
     @Body(new ZodValidationPipe(promptRequestSchema)) body: PromptRequest,
   ) {
     return this.promptService.processMessage(body.sessionId, body.message);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Get("all-projects")
+  async getAllProjects(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("limit", new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.clientsService.findAllProjects(page, limit);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Get("all-topics")
+  async getAllTopics(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("limit", new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.clientsService.findAllTopics(page, limit);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -63,7 +106,8 @@ export class ClientsController {
   @Roles("SUPER_ADMIN", "ADMIN")
   @Get(":id")
   async findOne(@Param("id") id: string) {
-    return this.clientsService.findOne(id);
+    const client = await this.clientsService.findOne(id);
+    return { data: client };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -81,19 +125,25 @@ export class ClientsController {
     @Body(new ZodValidationPipe(updateClientSchema)) body: UpdateClient,
   ) {
     const updated = await this.clientsService.updateClient(id, body);
+    return { data: updated };
+  }
 
-    return { data: updated, rematch: "queued" };
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Post(":id/generate-topic-prompt")
+  async generateTopicPrompt(
+    @Param("id") clientId: string,
+    @Body() body: { title?: string },
+  ) {
+    return this.clientsService.generateTopicPrompt(clientId, body.title ?? "");
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "ADMIN")
   @Post(":id/rematch")
   async rematch(@Param("id") id: string) {
-    // Validate client exists
     await this.clientsService.findOne(id);
-
     await this.clientsService.enqueueMatching(id);
-
     return { message: "Rematch initiated", clientId: id };
   }
 
@@ -102,10 +152,7 @@ export class ClientsController {
   @Post("backfill")
   async backfill() {
     const result = await this.clientsService.backfillClients({ status: "ACTIVE" });
-    return {
-      message: "Client backfill queued",
-      ...result,
-    };
+    return { message: "Client backfill queued", ...result };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -117,5 +164,105 @@ export class ClientsController {
     @Body(new ZodValidationPipe(updateMatchStatusSchema)) body: UpdateMatchStatus,
   ) {
     return this.clientsService.updateMatchStatus(clientId, matchId, body.status);
+  }
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Get(":id/projects")
+  async getProjects(@Param("id") clientId: string) {
+    return this.clientsService.getProjects(clientId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Post(":id/projects")
+  async createProject(
+    @Param("id") clientId: string,
+    @Body(new ZodValidationPipe(createProjectSchema)) body: CreateProject,
+  ) {
+    return this.clientsService.createProject(clientId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Patch(":id/projects/:projectId")
+  async updateProject(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+    @Body(new ZodValidationPipe(updateProjectSchema)) body: UpdateProject,
+  ) {
+    return this.clientsService.updateProject(clientId, projectId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete(":id/projects/:projectId")
+  async deleteProject(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+  ) {
+    await this.clientsService.deleteProject(clientId, projectId);
+  }
+
+  // ── Topics ────────────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Get(":id/projects/:projectId/topics")
+  async getTopics(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+  ) {
+    return this.clientsService.getTopics(clientId, projectId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Post(":id/projects/:projectId/topics")
+  async createTopic(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+    @Body(new ZodValidationPipe(createTopicSchema)) body: CreateTopic,
+  ) {
+    return this.clientsService.createTopic(clientId, projectId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Patch(":id/projects/:projectId/topics/:topicId")
+  async updateTopic(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+    @Param("topicId") topicId: string,
+    @Body(new ZodValidationPipe(updateTopicSchema)) body: UpdateTopic,
+  ) {
+    return this.clientsService.updateTopic(clientId, projectId, topicId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete(":id/projects/:projectId/topics/:topicId")
+  async deleteTopic(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+    @Param("topicId") topicId: string,
+  ) {
+    await this.clientsService.deleteTopic(clientId, projectId, topicId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
+  @Post(":id/projects/:projectId/topics/:topicId/embed")
+  async embedTopic(
+    @Param("id") _clientId: string,
+    @Param("projectId") _projectId: string,
+    @Param("topicId") topicId: string,
+  ) {
+    await this.clientsService.enqueueTopicEmbedding(topicId);
+    return { message: "Embedding queued", topicId };
   }
 }
