@@ -16,19 +16,26 @@ export const announcementStatusSchema = z.enum([
 ]);
 export type AnnouncementStatus = z.infer<typeof announcementStatusSchema>;
 
-/** Lekkie podsumowanie pozycji ogłoszenia — używane w widoku listy */
-export const announcementItemSummarySchema = z.object({
-  id: z.string().uuid(),
-  shortSummary: z.string().nullable(),
-  llmEstimatedValue: z.string().nullable(),
-  kind: z.string().nullable(),
-});
-export type AnnouncementItemSummary = z.infer<typeof announcementItemSummarySchema>;
+export const announcementKindSchema = z.enum([
+  "DOSTAWA",
+  "USLUGA",
+  "ROBOTY_BUDOWLANE",
+  "SZKOLENIE",
+  "USLUGA_IT",
+  "USLUGA_BADAWCZO_ROZWOJOWA",
+  "DORADZTWO",
+  "INNE",
+]);
+export type AnnouncementKind = z.infer<typeof announcementKindSchema>;
+
+export const embeddingStatusSchema = z.enum(["PENDING", "EMBEDDED", "ERROR"]);
+export type EmbeddingStatus = z.infer<typeof embeddingStatusSchema>;
 
 export const announcementSchema = z.object({
   id: z.string().uuid(),
   sourceSystem: announcementSourceSchema,
   externalId: z.string(),
+  partIndex: z.number().int(),
   title: z.string(),
   description: z.string().nullable(),
   url: z.string(),
@@ -37,9 +44,12 @@ export const announcementSchema = z.object({
   valueMax: z.string().nullable(),
   publishedAt: z.string().datetime().nullable(),
   deadlineAt: z.string().datetime().nullable(),
-  rawData: z.unknown(),
+  searchContext: z.string().optional(),
+  kind: announcementKindSchema.nullable().optional(),
   detailedReport: z.string().nullable().optional(),
-  items: z.array(announcementItemSummarySchema).optional(),
+  llmEstimatedValue: z.string().nullable().optional(),
+  embeddingStatus: embeddingStatusSchema.optional(),
+  rawData: z.unknown(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

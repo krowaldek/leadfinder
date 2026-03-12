@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { searchModeSchema } from "./search.js";
 
 export const geographicScopeSchema = z.enum(["NATIONAL", "REGIONAL", "LOCAL"]);
 export type GeographicScope = z.infer<typeof geographicScopeSchema>;
@@ -33,7 +34,6 @@ export const updateClientSchema = z.object({
   budgetDescription: z.string().trim().min(1).optional(),
   contactPersonName: z.string().trim().min(1).optional(),
   contactPersonRole: z.string().trim().min(1).optional(),
-  negativeKeywords: z.array(z.string().trim().min(1)).optional(),
 });
 export type UpdateClient = z.infer<typeof updateClientSchema>;
 
@@ -52,48 +52,45 @@ export const clientResponseSchema = z.object({
   budgetDescription: z.string(),
   contactPersonName: z.string(),
   contactPersonRole: z.string(),
-  profileSummary: z.string(),
-  negativeKeywords: z.array(z.string()),
   status: clientStatusSchema,
-  matchCount: z.number(),
+  projectCount: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type ClientResponse = z.infer<typeof clientResponseSchema>;
 
+/// Flat announcement shape used inside match responses.
 export const clientMatchAnnouncementSchema = z.object({
   id: z.string(),
   title: z.string(),
+  description: z.string().nullable().optional(),
   url: z.string(),
   sourceSystem: z.string(),
   externalId: z.string(),
+  partIndex: z.number(),
   publishedAt: z.string().nullable(),
   deadlineAt: z.string().nullable(),
   valueMin: z.string().nullable(),
   valueMax: z.string().nullable(),
-  detailedReport: z.string().nullable().optional(),
-});
-
-export const clientMatchItemSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string().nullable(),
-  price: z.string().nullable(),
   kind: z.string().nullable().optional(),
-  shortSummary: z.string().nullable().optional(),
+  searchContext: z.string().optional(),
   detailedReport: z.string().nullable().optional(),
   llmEstimatedValue: z.string().nullable().optional(),
-  searchContext: z.string().optional(),
-  announcement: clientMatchAnnouncementSchema,
 });
 
 export const clientMatchResponseSchema = z.object({
   id: z.string(),
-  clientId: z.string(),
-  announcementItemId: z.string(),
+  topicId: z.string(),
+  announcementId: z.string(),
   similarity: z.number(),
   status: clientMatchStatusSchema,
-  announcementItem: clientMatchItemSchema,
+  topic: z.object({
+    id: z.string(),
+    title: z.string(),
+    projectId: z.string(),
+    projectName: z.string(),
+  }),
+  announcement: clientMatchAnnouncementSchema,
   createdAt: z.string(),
 });
 export type ClientMatchResponse = z.infer<typeof clientMatchResponseSchema>;
@@ -129,8 +126,6 @@ export const clientsListResponseSchema = z.object({
 export type ClientsListResponse = z.infer<typeof clientsListResponseSchema>;
 
 export const clientMatchesResponseSchema = z.object({
-  clientProfileSummary: z.string().optional(),
-  clientEmbeddingText: z.string().optional(),
   data: z.array(clientMatchResponseSchema),
   meta: z.object({
     total: z.number(),
@@ -142,3 +137,19 @@ export const updateMatchStatusSchema = z.object({
   status: clientMatchStatusSchema,
 });
 export type UpdateMatchStatus = z.infer<typeof updateMatchStatusSchema>;
+
+export const onboardRequestSchema = z.object({
+  activity: z.string().trim().min(5).max(2000),
+  email: z.string().email().trim().toLowerCase(),
+});
+export type OnboardRequest = z.infer<typeof onboardRequestSchema>;
+
+export const onboardResponseSchema = z.object({
+  client: clientResponseSchema,
+  projectId: z.string(),
+  topicId: z.string(),
+});
+export type OnboardResponse = z.infer<typeof onboardResponseSchema>;
+
+export const rematchClientRequestSchema = z.object({});
+export type RematchClientRequest = z.infer<typeof rematchClientRequestSchema>;
