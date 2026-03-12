@@ -1,104 +1,100 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ChatOpenAI } from "@langchain/openai";
-import { HumanMessage } from "@langchain/core/messages";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
-import { AppEmbeddings } from "../common/embeddings.js";
 
-interface MatchRow {
-  announcement_item_id: string;
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+interface AnnouncementVectorRow {
+  announcement_id: string;
   similarity: number;
   title: string;
   description: string | null;
-  keyword_hits?: number;
+  search_context: string;
 }
 
-const MATCH_THRESHOLD = 0.35;
-const MATCH_LIMIT = 50;
-const NEGATIVE_KEYWORD_PENALTY = 0.12; // sprowadza dopasowanie do ~12% oryginalnego score
-const MAX_SYNTHETIC_ANNOUNCEMENT_CHARS = 8_000;
-const MIN_KEYWORD_LENGTH = 4;
-const MAX_FALLBACK_KEYWORDS = 12;
-
-const STOPWORDS = new Set([
-  "oraz",
-  "przedmiot",
-  "zamówienia",
-  "zamowienia",
-  "zakres",
-  "warunki",
-  "realizacji",
-  "wobec",
-  "wykonawcy",
-  "dostawa",
-  "dostawy",
-  "usługa",
-  "usluga",
-  "usługi",
-  "uslugi",
-  "roboty",
-  "budżet",
-  "budzet",
-  "skala",
-  "projekt",
-  "firma",
-  "klienta",
-  "publicznych",
-  "publiczne",
-  "całej",
-  "polsce",
-  "polska",
-  "terenie",
-  "wymagania",
-  "słowa",
-  "slowa",
-  "kluczowe",
-  "frazy",
-  "równoważne",
-  "rownowazne",
-  "poza",
-  "zakresem",
-  "wdrożenie",
-  "wdrozenia",
-  "kompleksowe",
-  "świadczenie",
-  "swiadczenie",
-  "montaz",
-  "montaż",
-  "instalacja",
-  "instalacji",
-  "projektu",
-  "budowlanego",
-  "ramach",
-  "systemu",
-  "systemow",
-  "systemów",
-  "male",
-  "małych",
-  "malych",
-  "przedsiebiorstw",
-  "przedsiębiorstw",
-  "instytucji",
-  "sprzetu",
-  "sprzętu",
-  "uslug",
-  "usług",
-  "wdrozenie",
-  "wdrożenie",
-  "wdrozenia",
-  "wdrożenia",
-]);
-
-function escapeSqlLiteral(value: string): string {
-  return value.replace(/'/g, "''");
+interface AnnouncementKeywordRow {
+  announcement_id: string;
+  keyword_rank: number;
+  title: string;
+  description: string | null;
+  search_context: string;
 }
 
-function applyNegativePenalty(row: MatchRow, negativeKeywords: string[]): boolean {
+interface TopicMatchRow {
+  topic_id: string;
+  similarity: number;
+  negative_keywords: string[];
+}
+
+interface ScoredCandidate {
+  announcement_id: string;
+  title: string;
+  description: string | null;
+  search_context: string;
+  semantic: number;
+  keyword: number;
+  hybrid: number;
+  rerank: number | null;
+  final: number;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Minimum cosine similarity to include a vector candidate. Lowered slightly
+ *  because keyword boost compensates for weaker semantic matches. */
+const MATCH_THRESHOLD = 0.22;
+
+/** How many vector candidates to retrieve from pgvector per topic. */
+const VECTOR_CANDIDATE_LIMIT = 200;
+
+/** How many keyword-search candidates to retrieve per topic. */
+const KEYWORD_MATCH_LIMIT = 100;
+
+/** Maximum final matches stored per topic after scoring. */
+const FINAL_MATCH_LIMIT = 100;
+
+/** How many top candidates to send to the LLM re-ranker. */
+const RERANK_WINDOW = 25;
+
+/** Used in the reverse direction (announcement → topics). */
+const MATCH_LIMIT_TOPICS = 100;
+
+/** Multiplier applied to a match score when a negative keyword is detected. */
+const NEGATIVE_KEYWORD_PENALTY = 0.12;
+
+/** Weight of cosine similarity in the hybrid score. */
+const SEMANTIC_WEIGHT = 0.65;
+
+/** Weight of normalised keyword rank in the hybrid score. */
+const KEYWORD_WEIGHT = 0.35;
+
+/** Blend weights when LLM re-rank score is available. */
+const RERANK_HYBRID_WEIGHT = 0.40;
+const RERANK_LLM_WEIGHT = 0.60;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function clamp(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+function applyNegativePenalty(haystack: string, negativeKeywords: string[]): boolean {
   if (negativeKeywords.length === 0) return false;
-  const haystack = `${row.title} ${row.description ?? ""}`.toLowerCase();
-  return negativeKeywords.some((kw) => haystack.includes(kw.toLowerCase()));
+  const lower = haystack.toLowerCase();
+  return negativeKeywords.some((kw) => lower.includes(kw.toLowerCase()));
 }
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
 
 @Injectable()
 export class ClientMatchingService {
@@ -109,326 +105,412 @@ export class ClientMatchingService {
     @Inject(ConfigService) private readonly config: ConfigService<AppEnv>,
   ) {}
 
-  async matchClient(clientId: string): Promise<number> {
-    const client = await this.prisma.client.findUnique({
-      where: { id: clientId },
-      select: {
-        id: true,
-        companyName: true,
-        industry: true,
-        geographicScope: true,
-        geographicDetails: true,
-        budgetDescription: true,
-        contactPersonName: true,
-        contactPersonRole: true,
-        profileSummary: true,
-        negativeKeywords: true,
-      },
-    });
+  // ── matchTopic ─────────────────────────────────────────────────────────────
 
-    if (!client) throw new Error(`Client not found: ${clientId}`);
-
-    this.logger.debug(
-      `Generating synthetic announcement embedding for client: ${client.companyName}`,
-    );
-
-    const syntheticAnnouncementText = await this.generateSyntheticAnnouncement(client);
-
-    const embedder = new AppEmbeddings(this.config);
-    const vector = await embedder.embedQuery(syntheticAnnouncementText);
-    const vectorStr = `[${vector.join(",")}]`;
-
-    await this.prisma.$executeRaw`
-      UPDATE clients
-      SET
-        "profileEmbedding" = ${vectorStr}::vector,
-        "syntheticAnnouncementText" = ${syntheticAnnouncementText},
-        "updatedAt" = NOW()
-      WHERE id = ${clientId}::uuid
+  /**
+   * Full pipeline for one topic:
+   *   1. Vector search (cosine similarity)
+   *   2. Keyword search (tsvector / websearch_to_tsquery on title+description+searchContext)
+   *   3. Hybrid score merge (semantic × 0.65 + keyword × 0.35)
+   *   4. Negative keyword penalty
+   *   5. LLM re-ranking of top RERANK_WINDOW candidates (if OpenAI key present)
+   *   6. Upsert ClientMatch rows & remove stale ones
+   */
+  async matchTopic(topicId: string): Promise<number> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        title: string;
+        prompt: string;
+        embedding: string | null;
+        negative_keywords: string[];
+      }>
+    >`
+      SELECT id, title, prompt, embedding::text, "negativeKeywords" AS negative_keywords
+      FROM topics
+      WHERE id = ${topicId}::uuid
+        AND "embeddingStatus" = 'EMBEDDED'
+        AND embedding IS NOT NULL
     `;
 
-    const fallbackKeywords = this.extractFallbackKeywords(client, syntheticAnnouncementText);
-    let rows = fallbackKeywords.length > 0
-      ? await this.findKeywordFallbackMatches(vectorStr, fallbackKeywords)
-      : [];
-
-    if (rows.length > 0) {
-      this.logger.log(
-        `Keyword-first matching for client "${client.companyName}" using keywords: ${fallbackKeywords.join(", ")}`,
-      );
+    if (!rows.length || !rows[0]?.embedding) {
+      this.logger.warn(`Topic ${topicId} not yet embedded, skipping match`);
+      return 0;
     }
 
-    if (rows.length === 0) {
-      rows = await this.prisma.$queryRaw<MatchRow[]>`
+    const { embedding: vectorStr, title: topicTitle, prompt: topicPrompt } = rows[0];
+    const negativeKeywords = (rows[0].negative_keywords ?? []) as string[];
+
+    // 1. Vector candidates
+    const vectorRows = await this.prisma.$queryRaw<AnnouncementVectorRow[]>`
       SELECT
-        ai.id AS announcement_item_id,
-        (1 - (ai.embedding <=> ${vectorStr}::vector)) AS similarity,
-        ai.title,
-        ai.description
-      FROM announcement_items ai
-      WHERE
-        ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
-        AND ai.embedding IS NOT NULL
-        AND (1 - (ai.embedding <=> ${vectorStr}::vector)) >= ${MATCH_THRESHOLD}
-      ORDER BY ai.embedding <=> ${vectorStr}::vector
-      LIMIT ${MATCH_LIMIT}
-      `;
-    }
+        a.id AS announcement_id,
+        (1 - (a.embedding <=> ${vectorStr}::vector))::float AS similarity,
+        a.title,
+        a.description,
+        a."searchContext" AS search_context
+      FROM announcements a
+      WHERE a."embeddingStatus" = 'EMBEDDED'
+        AND a.embedding IS NOT NULL
+        AND (1 - (a.embedding <=> ${vectorStr}::vector)) >= ${MATCH_THRESHOLD}
+      ORDER BY a.embedding <=> ${vectorStr}::vector
+      LIMIT ${VECTOR_CANDIDATE_LIMIT}
+    `;
 
-    const negativeKeywords: string[] = client.negativeKeywords ?? [];
+    // 2. Keyword candidates (first 400 chars of prompt as free-text query)
+    const keywordQuery = topicPrompt.slice(0, 400);
+    const keywordRows = await this.runKeywordSearch(keywordQuery, KEYWORD_MATCH_LIMIT);
 
-    if (negativeKeywords.length > 0) {
-      this.logger.debug(
-        `Applying negative keyword penalty for ${negativeKeywords.length} exclusion(s): [${negativeKeywords.join(", ")}]`,
-      );
-    }
+    // 3. Merge + hybrid score
+    const merged = this.mergeAndScore(vectorRows, keywordRows);
+
+    // 4. Negative keyword penalty — use full haystack: title + description + searchContext
+    const penalized = merged.map((c) => {
+      const haystack = `${c.title} ${c.description ?? ""} ${c.search_context}`.toLowerCase();
+      const bad = applyNegativePenalty(haystack, negativeKeywords);
+      return bad ? { ...c, hybrid: clamp(c.hybrid * NEGATIVE_KEYWORD_PENALTY) } : c;
+    });
+
+    const sorted = penalized.sort((a, b) => b.hybrid - a.hybrid).slice(0, FINAL_MATCH_LIMIT);
 
     this.logger.log(
-      `Found ${rows.length} candidate matches for client "${client.companyName}"`,
+      `Topic "${topicTitle}": vector=${vectorRows.length}, keyword=${keywordRows.length}, merged=${merged.length}, pre-rerank=${sorted.length}`,
     );
 
+    // 5. LLM re-ranking of top candidates
+    const finalCandidates = await this.applyRerank(topicTitle, topicPrompt, sorted);
+
+    // 6. Upsert
     const retainedIds = new Set<string>();
-    let penalized = 0;
-    for (const row of rows) {
-      retainedIds.add(row.announcement_item_id);
-      const isPenalized = applyNegativePenalty(row, negativeKeywords);
-      const finalSimilarity = isPenalized
-        ? Number(row.similarity) * NEGATIVE_KEYWORD_PENALTY
-        : Number(row.similarity);
-
-      if (isPenalized) penalized++;
-
+    for (const c of finalCandidates) {
+      retainedIds.add(c.announcement_id);
       await this.prisma.clientMatch.upsert({
-        where: {
-          clientId_announcementItemId: {
-            clientId,
-            announcementItemId: row.announcement_item_id,
-          },
-        },
-        create: {
-          clientId,
-          announcementItemId: row.announcement_item_id,
-          similarity: finalSimilarity,
-          status: "NEW",
-        },
-        update: {
-          similarity: finalSimilarity,
-          updatedAt: new Date(),
-        },
+        where: { topicId_announcementId: { topicId, announcementId: c.announcement_id } },
+        create: { topicId, announcementId: c.announcement_id, similarity: c.final, status: "NEW" },
+        update: { similarity: c.final, updatedAt: new Date() },
       });
     }
 
     if (retainedIds.size > 0) {
       await this.prisma.clientMatch.deleteMany({
-        where: {
-          clientId,
-          announcementItemId: { notIn: Array.from(retainedIds) },
-        },
+        where: { topicId, announcementId: { notIn: Array.from(retainedIds) } },
       });
     } else {
-      await this.prisma.clientMatch.deleteMany({ where: { clientId } });
+      await this.prisma.clientMatch.deleteMany({ where: { topicId } });
     }
 
-    if (penalized > 0) {
-      this.logger.log(
-        `Penalized ${penalized}/${rows.length} matches due to negative keyword exclusions`,
-      );
-    }
-
-    return rows.length;
+    return finalCandidates.length;
   }
 
-  private async generateSyntheticAnnouncement(client: {
-    companyName: string;
-    industry: string;
-    geographicScope: "NATIONAL" | "REGIONAL" | "LOCAL";
-    geographicDetails: string | null;
-    budgetDescription: string;
-    contactPersonName: string;
-    contactPersonRole: string;
-    profileSummary: string;
-    negativeKeywords: string[];
-  }): Promise<string> {
-    const apiKey = this.config.get<string>("OPENAI_API_KEY") ?? "";
-    const scopeLabel =
-      client.geographicScope === "NATIONAL"
-        ? "cała Polska"
-        : client.geographicScope === "REGIONAL"
-          ? "regionalny"
-          : "lokalny";
-    const location = client.geographicDetails
-      ? `${scopeLabel} (${client.geographicDetails})`
-      : scopeLabel;
-    const exclusions = client.negativeKeywords.length > 0
-      ? client.negativeKeywords.join(", ")
-      : "brak jawnych wykluczeń";
+  // ── matchAllTopicsAgainstAnnouncement ──────────────────────────────────────
 
-    if (!apiKey || !apiKey.startsWith("sk-") || apiKey.includes("xxx")) {
-      return this.buildFallbackSyntheticAnnouncement(client, location, exclusions);
+  /**
+   * Called after a new announcement is embedded.
+   * Finds all embedded topics that semantically match this announcement.
+   * Uses vector similarity only — no LLM (this runs for every scraped announcement).
+   */
+  async matchAllTopicsAgainstAnnouncement(announcementId: string): Promise<void> {
+    const announcements = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        title: string;
+        description: string | null;
+        search_context: string;
+        embedding: string | null;
+      }>
+    >`
+      SELECT id, title, description, "searchContext" AS search_context, embedding::text
+      FROM announcements
+      WHERE id = ${announcementId}::uuid
+        AND "embeddingStatus" = 'EMBEDDED'
+        AND embedding IS NOT NULL
+    `;
+
+    if (!announcements.length || !announcements[0]?.embedding) {
+      this.logger.warn(`Announcement ${announcementId} not yet embedded, skipping topic match`);
+      return;
     }
 
-    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
-    const llm = new ChatOpenAI({ apiKey, model: chatModel, temperature: 0.2, maxTokens: 1_500 });
+    const ann = announcements[0];
+    const announcementVectorStr = ann.embedding;
+    const announcementHaystack =
+      `${ann.title} ${ann.description ?? ""} ${ann.search_context}`.toLowerCase();
 
-    const prompt = `Jesteś ekspertem od polskich zamówień publicznych. Na podstawie profilu klienta wygeneruj SYNTETYCZNE OGŁOSZENIE, na które ta firma idealnie chciałaby odpowiedzieć.
+    const matchingTopics = await this.prisma.$queryRaw<TopicMatchRow[]>`
+      SELECT
+        t.id AS topic_id,
+        (1 - (t.embedding <=> ${announcementVectorStr}::vector))::float AS similarity,
+        t."negativeKeywords" AS negative_keywords
+      FROM topics t
+      WHERE t."embeddingStatus" = 'EMBEDDED'
+        AND t.embedding IS NOT NULL
+        AND (1 - (t.embedding <=> ${announcementVectorStr}::vector)) >= ${MATCH_THRESHOLD}
+      ORDER BY t.embedding <=> ${announcementVectorStr}::vector
+      LIMIT ${MATCH_LIMIT_TOPICS}
+    `;
 
-To ma być tekst do embeddingu i dopasowania semantycznego do realnych announcement_items.
-Ma być maksymalnie precyzyjny, bogaty w terminologię przetargową, ale bez lania wody.
+    if (matchingTopics.length === 0) return;
 
-PROFIL KLIENTA
-- Firma: ${client.companyName}
-- Branża/specjalizacja: ${client.industry}
-- Zasięg geograficzny: ${location}
-- Budżet / skala zleceń: ${client.budgetDescription}
-- Osoba kontaktowa: ${client.contactPersonName} (${client.contactPersonRole})
-- Wykluczenia: ${exclusions}
-- Krótki profil: ${client.profileSummary}
+    this.logger.log(
+      `Announcement ${announcementId}: ${matchingTopics.length} topic(s) matched above threshold`,
+    );
 
-WYMAGANIA WYJŚCIA
-- Pisz po polsku.
-- Wygeneruj jedno syntetyczne ogłoszenie odpowiadające JEDNEJ typowej części / itemowi.
-- Użyj struktury Markdown z sekcjami dokładnie:
-## Tytuł
-## Przedmiot zamówienia
-## Zakres prac / dostaw / usług
-## Wymagania wobec wykonawcy
-## Termin i warunki realizacji
-## Budżet i skala
-## Słowa kluczowe i frazy równoważne
-## Poza zakresem
-- Dodaj bogate słownictwo branżowe, synonimy, język OPZ/SWZ/SIWZ i frazy podobne do realnych ogłoszeń.
-- Uwzględnij tylko to, czego firma realnie szuka.
-- W sekcji "Poza zakresem" wpisz pozycje, których firma nie chce realizować.
-- Nie pisz o samej firmie jako oferencie — opisz zamówienie, na które firma chce odpowiedzieć.
-- Maksymalna długość: około 700-900 słów.`;
+    for (const topicRow of matchingTopics) {
+      const negativeKeywords = (topicRow.negative_keywords ?? []) as string[];
+      const isPenalized = applyNegativePenalty(announcementHaystack, negativeKeywords);
+      const finalSimilarity = isPenalized
+        ? Number(topicRow.similarity) * NEGATIVE_KEYWORD_PENALTY
+        : Number(topicRow.similarity);
 
+      await this.prisma.clientMatch.upsert({
+        where: {
+          topicId_announcementId: { topicId: topicRow.topic_id, announcementId },
+        },
+        create: {
+          topicId: topicRow.topic_id,
+          announcementId,
+          similarity: finalSimilarity,
+          status: "NEW",
+        },
+        update: { similarity: finalSimilarity, updatedAt: new Date() },
+      });
+    }
+  }
+
+  // ── matchClient ─────────────────────────────────────────────────────────────
+
+  /**
+   * Re-match all topics belonging to all projects of a client.
+   * Returns the total number of matches found.
+   */
+  async matchClient(clientId: string): Promise<number> {
+    const topics = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT t.id
+      FROM topics t
+      JOIN projects p ON t."projectId" = p.id
+      WHERE p."clientId" = ${clientId}::uuid
+        AND t."embeddingStatus" = 'EMBEDDED'
+    `;
+
+    if (topics.length === 0) {
+      this.logger.debug(`No embedded topics found for client ${clientId}`);
+      return 0;
+    }
+
+    let total = 0;
+    for (const topic of topics) {
+      total += await this.matchTopic(topic.id);
+    }
+
+    this.logger.log(
+      `matchClient ${clientId}: ${total} total matches across ${topics.length} topic(s)`,
+    );
+    return total;
+  }
+
+  // ── backfillTopicMatches ───────────────────────────────────────────────────
+
+  /**
+   * Re-match all embedded topics (useful after a bulk re-embed of announcements).
+   */
+  async backfillTopicMatches(): Promise<{ processed: number }> {
+    const topics = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM topics WHERE "embeddingStatus" = 'EMBEDDED'
+    `;
+
+    this.logger.log(`Backfill: re-matching ${topics.length} embedded topic(s)`);
+
+    for (const topic of topics) {
+      await this.matchTopic(topic.id);
+    }
+
+    return { processed: topics.length };
+  }
+
+  // ── Private: keyword search ────────────────────────────────────────────────
+
+  private async runKeywordSearch(
+    query: string,
+    limit: number,
+  ): Promise<AnnouncementKeywordRow[]> {
+    if (!query.trim()) return [];
     try {
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const content = typeof response.content === "string" ? response.content.trim() : "";
-      if (content.length >= 200) {
-        return content.slice(0, MAX_SYNTHETIC_ANNOUNCEMENT_CHARS);
-      }
+      return await this.prisma.$queryRaw<AnnouncementKeywordRow[]>`
+        SELECT
+          a.id AS announcement_id,
+          ts_rank_cd(
+            to_tsvector('simple',
+              coalesce(a.title, '') || ' ' ||
+              coalesce(a.description, '') || ' ' ||
+              coalesce(a."searchContext", '')
+            ),
+            websearch_to_tsquery('simple', ${query})
+          )::float AS keyword_rank,
+          a.title,
+          a.description,
+          a."searchContext" AS search_context
+        FROM announcements a
+        WHERE a."embeddingStatus" = 'EMBEDDED'
+          AND to_tsvector('simple',
+            coalesce(a.title, '') || ' ' ||
+            coalesce(a.description, '') || ' ' ||
+            coalesce(a."searchContext", '')
+          ) @@ websearch_to_tsquery('simple', ${query})
+        ORDER BY keyword_rank DESC
+        LIMIT ${limit}
+      `;
     } catch (err) {
-      this.logger.warn(
-        `Synthetic announcement generation failed for ${client.companyName}: ${String(err)}`,
-      );
-    }
-
-    return this.buildFallbackSyntheticAnnouncement(client, location, exclusions);
-  }
-
-  private buildFallbackSyntheticAnnouncement(
-    client: {
-      companyName: string;
-      industry: string;
-      budgetDescription: string;
-      profileSummary: string;
-      negativeKeywords: string[];
-    },
-    location: string,
-    exclusions: string,
-  ): string {
-    return [
-      "## Tytuł",
-      `${client.industry} — syntetyczne ogłoszenie dopasowane do profilu klienta ${client.companyName}`,
-      "",
-      "## Przedmiot zamówienia",
-      `Zamówienie odpowiadające profilowi branżowemu klienta w obszarze: ${client.industry}. Lokalizacja realizacji: ${location}.`,
-      "",
-      "## Zakres prac / dostaw / usług",
-      client.profileSummary,
-      "",
-      "## Wymagania wobec wykonawcy",
-      `Wykonawca powinien posiadać doświadczenie adekwatne do zakresu ${client.industry}, zdolność realizacji w modelu odpowiadającym budżetowi ${client.budgetDescription}, oraz kompetencje branżowe typowe dla postępowań zakupowych i przetargowych.`,
-      "",
-      "## Termin i warunki realizacji",
-      `Warunki realizacji powinny być realistyczne dla projektów w segmencie ${client.industry}, z jasnym harmonogramem, wymaganiami odbiorowymi i warunkami współpracy w obszarze ${location}.`,
-      "",
-      "## Budżet i skala",
-      client.budgetDescription,
-      "",
-      "## Słowa kluczowe i frazy równoważne",
-      `${client.industry}, wykonawca, realizacja zamówienia, OPZ, SWZ, SIWZ, przedmiot zamówienia, warunki udziału, wymagania techniczne, zakres realizacji, oferta, kryteria oceny, doświadczenie, referencje, harmonogram, odbiór, wdrożenie, usługa, dostawa, roboty, utrzymanie, serwis.`,
-      "",
-      "## Poza zakresem",
-      exclusions,
-    ].join("\n").slice(0, MAX_SYNTHETIC_ANNOUNCEMENT_CHARS);
-  }
-
-  private extractFallbackKeywords(
-    client: {
-      industry: string;
-      profileSummary: string;
-      negativeKeywords: string[];
-    },
-    syntheticAnnouncementText: string,
-  ): string[] {
-    const titleMatch = syntheticAnnouncementText.match(/## Tytuł\s+([^\n]+)/i);
-    const titleLine = titleMatch?.[1] ?? "";
-
-    const baseText = [client.industry, titleLine]
-      .join(" ")
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, " ")
-      .replace(/cpv\s*\d[\d-]*/g, " ")
-      .replace(/[^\p{L}\p{N}\s-]/gu, " ");
-
-    const frequencies = new Map<string, number>();
-    for (const token of baseText.split(/\s+/)) {
-      const keyword = token.trim();
-      if (
-        keyword.length < MIN_KEYWORD_LENGTH ||
-        STOPWORDS.has(keyword) ||
-        client.negativeKeywords.some((negative) => negative.toLowerCase() === keyword)
-      ) {
-        continue;
-      }
-
-      frequencies.set(keyword, (frequencies.get(keyword) ?? 0) + 1);
-    }
-
-    return [...frequencies.entries()]
-      .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
-      .map(([keyword]) => keyword)
-      .slice(0, MAX_FALLBACK_KEYWORDS);
-  }
-
-  private async findKeywordFallbackMatches(
-    vectorStr: string,
-    keywords: string[],
-  ): Promise<MatchRow[]> {
-    const safeKeywords = keywords
-      .map((keyword) => escapeSqlLiteral(keyword.trim().toLowerCase()))
-      .filter((keyword) => keyword.length >= MIN_KEYWORD_LENGTH)
-      .slice(0, MAX_FALLBACK_KEYWORDS);
-
-    if (safeKeywords.length === 0) {
+      this.logger.warn(`Keyword search failed, skipping: ${(err as Error).message}`);
       return [];
     }
+  }
 
-    const haystack = "lower(coalesce(ai.title, '') || ' ' || coalesce(ai.description, ''))";
-    const keywordHits = safeKeywords
-      .map((keyword) => `CASE WHEN ${haystack} LIKE '%${keyword}%' THEN 1 ELSE 0 END`)
-      .join(" + ");
-    const whereAnyKeyword = safeKeywords
-      .map((keyword) => `${haystack} LIKE '%${keyword}%'`)
-      .join(" OR ");
+  // ── Private: merge & hybrid score ─────────────────────────────────────────
 
-    return this.prisma.$queryRawUnsafe<MatchRow[]>(`
-      SELECT
-        ai.id AS announcement_item_id,
-        (1 - (ai.embedding <=> '${vectorStr}'::vector)) AS similarity,
-        ai.title,
-        ai.description,
-        (${keywordHits})::int AS keyword_hits
-      FROM announcement_items ai
-      WHERE
-        ai.status = 'EMBEDDED'::"AnnouncementItemStatus"
-        AND ai.embedding IS NOT NULL
-        AND (${whereAnyKeyword})
-      ORDER BY keyword_hits DESC, ai.embedding <=> '${vectorStr}'::vector
-      LIMIT ${MATCH_LIMIT}
-    `);
+  private mergeAndScore(
+    vectorRows: AnnouncementVectorRow[],
+    keywordRows: AnnouncementKeywordRow[],
+  ): ScoredCandidate[] {
+    const map = new Map<string, ScoredCandidate>();
+
+    for (const row of vectorRows) {
+      map.set(row.announcement_id, {
+        announcement_id: row.announcement_id,
+        title: row.title,
+        description: row.description,
+        search_context: row.search_context,
+        semantic: clamp(Number(row.similarity)),
+        keyword: 0,
+        hybrid: 0,
+        rerank: null,
+        final: 0,
+      });
+    }
+
+    // Normalise keyword ranks to [0, 1]
+    const maxRank = keywordRows.reduce((m, r) => Math.max(m, Number(r.keyword_rank)), 1) || 1;
+
+    for (const row of keywordRows) {
+      const kw = clamp(Number(row.keyword_rank) / maxRank);
+      const existing = map.get(row.announcement_id);
+      if (existing) {
+        map.set(row.announcement_id, { ...existing, keyword: kw });
+      } else if (kw >= 0.15) {
+        // Keyword-only candidate — include only if the keyword signal is strong enough
+        map.set(row.announcement_id, {
+          announcement_id: row.announcement_id,
+          title: row.title,
+          description: row.description,
+          search_context: row.search_context,
+          semantic: 0,
+          keyword: kw,
+          hybrid: 0,
+          rerank: null,
+          final: 0,
+        });
+      }
+    }
+
+    for (const [id, c] of map) {
+      map.set(id, {
+        ...c,
+        hybrid: clamp(c.semantic * SEMANTIC_WEIGHT + c.keyword * KEYWORD_WEIGHT),
+      });
+    }
+
+    return [...map.values()];
+  }
+
+  // ── Private: LLM re-ranking ────────────────────────────────────────────────
+
+  private async applyRerank(
+    topicTitle: string,
+    topicPrompt: string,
+    candidates: ScoredCandidate[],
+  ): Promise<ScoredCandidate[]> {
+    const apiKey = this.config.get<string>("OPENAI_API_KEY");
+    if (!apiKey || candidates.length === 0) {
+      return candidates.map((c) => ({ ...c, final: c.hybrid }));
+    }
+
+    const window = candidates.slice(0, RERANK_WINDOW);
+    const rest = candidates.slice(RERANK_WINDOW);
+
+    try {
+      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+      const llm = new ChatOpenAI({
+        apiKey,
+        model,
+        temperature: 0,
+        modelKwargs: { response_format: { type: "json_object" } },
+      });
+
+      const compact = window.map((c) => ({
+        id: c.announcement_id,
+        title: c.title,
+        context: (c.search_context || c.description || "").slice(0, 250),
+      }));
+
+      const result = await llm.invoke([
+        [
+          "system",
+          `Jesteś ekspertem od zamówień publicznych w Polsce. Oceń trafność każdego ogłoszenia przetargowego dla podanego profilu wyszukiwania klienta w skali 0.0-1.0. Bierz pod uwagę: zgodność branżową, rodzaj zamówienia, zakres prac. Odpowiedz WYŁĄCZNIE jako obiekt JSON: {"ranked":[{"id":"...","score":0.0-1.0,"reason":"krótki powód po polsku (max 70 znaków)"}]}`,
+        ],
+        [
+          "human",
+          `Profil klienta:\nTemat: ${topicTitle}\n${topicPrompt.slice(0, 500)}\n\nOgłoszenia do oceny:\n${JSON.stringify(compact)}`,
+        ],
+      ]);
+
+      const parsed = this.parseJson<{
+        ranked?: Array<{ id?: string; score?: number; reason?: string }>;
+      }>(String(result.content));
+
+      const rerankMap = new Map<string, number>();
+      for (const row of parsed.ranked ?? []) {
+        if (row.id) rerankMap.set(row.id, clamp(Number(row.score) || 0));
+      }
+
+      const rerankWindow = window.map((c) => {
+        const rerankScore = rerankMap.get(c.announcement_id) ?? null;
+        const final =
+          rerankScore != null
+            ? clamp(c.hybrid * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
+            : c.hybrid;
+        return { ...c, rerank: rerankScore, final };
+      });
+
+      const restScored = rest.map((c) => ({ ...c, final: c.hybrid }));
+      const all = [...rerankWindow, ...restScored].sort((a, b) => b.final - a.final);
+
+      this.logger.log(
+        `Re-ranked top ${window.length} candidates with LLM for topic "${topicTitle}"`,
+      );
+      return all;
+    } catch (err) {
+      this.logger.warn(
+        `LLM re-ranking failed, falling back to hybrid score: ${(err as Error).message}`,
+      );
+      return candidates.map((c) => ({ ...c, final: c.hybrid }));
+    }
+  }
+
+  // ── Private: JSON parser ───────────────────────────────────────────────────
+
+  private parseJson<T>(content: string): T {
+    try {
+      return JSON.parse(content) as T;
+    } catch {
+      const start = content.indexOf("{");
+      const end = content.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        try {
+          return JSON.parse(content.slice(start, end + 1)) as T;
+        } catch {
+          // fall through
+        }
+      }
+      return {} as T;
+    }
   }
 }
