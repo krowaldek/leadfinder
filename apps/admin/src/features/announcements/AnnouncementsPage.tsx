@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import { pl } from "date-fns/locale";
 import { useMemo, useState } from "react";
+import { useDebounce } from "@/lib/use-debounce";
 import { toast } from "sonner";
 import {
   DataTable,
@@ -160,7 +161,8 @@ function ScraperPanel() {
 }
 
 export function AnnouncementsPage() {
-  const [search, setSearch] = useState("");
+  const [inputSearch, setInputSearch] = useState("");
+  const debouncedSearch = useDebounce(inputSearch, 400);
   const [page, setPage] = useState(1);
   const [sourceFilter, setSourceFilter] = useState<AnnouncementSource | "ALL">("ALL");
   const [statusFilter, setStatusFilter] = useState<AnnouncementStatus | "ALL">("ALL");
@@ -169,10 +171,10 @@ export function AnnouncementsPage() {
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
 
   const query = useQuery({
-    queryKey: ["announcements", search, page, PAGE_SIZE, sourceFilter, statusFilter],
+    queryKey: ["announcements", debouncedSearch, page, PAGE_SIZE, sourceFilter, statusFilter],
     queryFn: () =>
       fetchAnnouncements({
-        search,
+        search: debouncedSearch,
         page,
         limit: PAGE_SIZE,
         source: sourceFilter === "ALL" ? undefined : sourceFilter,
@@ -189,23 +191,16 @@ export function AnnouncementsPage() {
         id: "title",
         header: "Ogłoszenie",
         accessorFn: (a) => a,
-        cell: ({ row }) => {
-          const summary = row.items?.[0]?.shortSummary;
-          return (
-            <div className="max-w-[420px]">
-              <div className="line-clamp-2 font-medium">{row.title}</div>
-              {summary ? (
-                <div className="mt-0.5 line-clamp-1 text-xs text-primary/70 font-medium">
-                  {summary}
-                </div>
-              ) : row.description ? (
-                <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                  {row.description}
-                </div>
-              ) : null}
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <div className="max-w-[420px]">
+            <div className="line-clamp-2 font-medium">{row.title}</div>
+            {row.description ? (
+              <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                {row.description}
+              </div>
+            ) : null}
+          </div>
+        ),
       },
       {
         id: "source",
@@ -267,9 +262,9 @@ export function AnnouncementsPage() {
       {
         id: "llmValue",
         header: "Wartość (LLM)",
-        accessorFn: (a) => a.items?.[0]?.llmEstimatedValue ?? null,
+        accessorFn: (a) => a.llmEstimatedValue ?? null,
         cell: ({ row }) => {
-          const val = row.items?.[0]?.llmEstimatedValue;
+          const val = row.llmEstimatedValue;
           if (!val) return <span className="text-muted-foreground text-xs">—</span>;
           return (
             <span className="text-sm font-medium tabular-nums">
@@ -300,7 +295,7 @@ export function AnnouncementsPage() {
       },
       {
         id: "report",
-        label: "Raport analityczny",
+        label: "Podsumowanie",
         onClick: (a) => setReportTarget(a),
       },
       {
@@ -373,10 +368,10 @@ export function AnnouncementsPage() {
         isLoading={query.isLoading}
         loadingMessage="Ładowanie ogłoszeń..."
         searchEnabled
-        searchValue={search}
+        searchValue={inputSearch}
         searchPlaceholder="Szukaj po tytule ogłoszenia"
         onSearchChange={(value) => {
-          setSearch(value);
+          setInputSearch(value);
           setPage(1);
         }}
         pagination={{

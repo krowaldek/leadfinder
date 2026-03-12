@@ -154,8 +154,7 @@ export function AnnouncementReportDialog({
                     <>
                       Kliknij „Generuj raport", aby przeprowadzić analizę ogłoszenia.
                       <br />
-                      Raport zostanie wygenerowany na podstawie treści ogłoszenia
-                      {announcement?.items?.some((i) => i.shortSummary) ? " i podsumowań pozycji." : "."}
+                      Raport zostanie wygenerowany na podstawie treści ogłoszenia.
                     </>
                   )}
                 </p>

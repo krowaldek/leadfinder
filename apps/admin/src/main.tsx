@@ -1,4 +1,3 @@
-import "@fontsource/cormorant-garamond/600.css";
 import "@/stores/theme-store";
 import "@fontsource/public-sans/400.css";
 import "@fontsource/public-sans/500.css";

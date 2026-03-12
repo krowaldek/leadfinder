@@ -7,17 +7,19 @@ import {
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { UsersPage } from "@/features/users/UsersPage";
 import { AnnouncementsPage } from "@/features/announcements/AnnouncementsPage";
 import { ClientsPage } from "@/features/clients/ClientsPage";
-import { ClientPromptPage } from "@/features/clients/ClientPromptPage";
+import { ClientDetailPage } from "@/features/clients/ClientDetailPage";
 import { ClientMatchesPage } from "@/features/clients/ClientMatchesPage";
+import { ProjectsPage } from "@/features/projects/ProjectsPage";
+import { TopicsPage } from "@/features/topics/TopicsPage";
 import { LogsPage } from "@/features/logs/LogsPage";
 import { getAuthSnapshot } from "@/stores/auth-store";
 
 function requireAuth() {
   const { accessToken } = getAuthSnapshot();
-
   if (!accessToken) {
     throw redirect({ to: "/login" });
   }
@@ -49,9 +51,13 @@ const appLayoutRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/users" });
-  },
+  beforeLoad: () => { throw redirect({ to: "/dashboard" }); },
+});
+
+const dashboardRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/dashboard",
+  component: DashboardPage,
 });
 
 const usersRoute = createRoute({
@@ -72,16 +78,28 @@ const clientsRoute = createRoute({
   component: ClientsPage,
 });
 
-const clientPromptRoute = createRoute({
-  getParentRoute: () => appLayoutRoute,
-  path: "/clients/prompt",
-  component: ClientPromptPage,
-});
-
 const clientMatchesRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
-  path: "/clients/matches",
+  path: "/views/matches",
   component: ClientMatchesPage,
+});
+
+const clientDetailRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/clients/$clientId",
+  component: ClientDetailPage,
+});
+
+const projectsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/projects",
+  component: ProjectsPage,
+});
+
+const topicsRoute = createRoute({
+  getParentRoute: () => appLayoutRoute,
+  path: "/topics",
+  component: TopicsPage,
 });
 
 const logsRoute = createRoute({
@@ -92,12 +110,21 @@ const logsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appLayoutRoute.addChildren([homeRoute, usersRoute, announcementsRoute, clientsRoute, clientPromptRoute, clientMatchesRoute, logsRoute]),
+  appLayoutRoute.addChildren([
+    homeRoute,
+    dashboardRoute,
+    usersRoute,
+    announcementsRoute,
+    clientsRoute,
+    clientMatchesRoute,
+    clientDetailRoute,
+    projectsRoute,
+    topicsRoute,
+    logsRoute,
+  ]),
 ]);
 
-export const router = createRouter({
-  routeTree,
-});
+export const router = createRouter({ routeTree });
 
 declare module "@tanstack/react-router" {
   interface Register {
