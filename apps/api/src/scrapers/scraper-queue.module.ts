@@ -20,11 +20,12 @@ export class ScraperScheduleService implements OnModuleInit {
   }
 
   async registerSchedules(cron?: string) {
-    const pattern = cron ?? this.config.get<string>("BK_SCRAPER_CRON") ?? "0 6 * * *";
+    const bkPattern = cron ?? this.config.get<string>("BK_SCRAPER_CRON") ?? "0 6 * * *";
+    const pzPattern = this.config.get<string>("PZ_SCRAPER_CRON") ?? "5 * * * *";
 
     const existing = await this.queue.getRepeatableJobs();
     for (const job of existing) {
-      if (job.name === ScraperJob.BK_SYNC) {
+      if (job.name === ScraperJob.BK_SYNC || job.name === ScraperJob.PZ_SYNC) {
         await this.queue.removeRepeatableByKey(job.key);
       }
     }
@@ -33,13 +34,23 @@ export class ScraperScheduleService implements OnModuleInit {
       ScraperJob.BK_SYNC,
       {},
       {
-        repeat: { pattern },
+        repeat: { pattern: bkPattern },
         removeOnComplete: { count: 20 },
         removeOnFail: { count: 50 },
       },
     );
 
-    return pattern;
+    await this.queue.add(
+      ScraperJob.PZ_SYNC,
+      {},
+      {
+        repeat: { pattern: pzPattern },
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 50 },
+      },
+    );
+
+    return bkPattern;
   }
 }
 

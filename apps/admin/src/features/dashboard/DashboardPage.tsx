@@ -366,6 +366,7 @@ export function DashboardPage() {
     refetchInterval: 30_000,
     staleTime: 20_000,
   });
+  const [onboardOpen, setOnboardOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -383,8 +384,6 @@ export function DashboardPage() {
       </div>
     );
   }
-
-  const [onboardOpen, setOnboardOpen] = useState(false);
 
   const { announcementsTotal, clientsTotal, projectsTotal, topicsTotal, stats, progress, scraperQueue, tokenStats } = data;
   const summary = progress.summary;

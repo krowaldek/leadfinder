@@ -697,12 +697,14 @@ function FilterBar({
   total,
   onRefresh,
   isLoading,
+  children,
 }: {
   status: JobLogStatus | undefined;
   onStatusChange: (s: JobLogStatus | undefined) => void;
   total: number | undefined;
   onRefresh: () => void;
   isLoading: boolean;
+  children?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-3 py-2">
@@ -720,6 +722,8 @@ function FilterBar({
           <SelectItem value="STARTED">W trakcie</SelectItem>
         </SelectContent>
       </Select>
+
+      {children}
 
       {total != null && (
         <span className="text-xs text-muted-foreground">{total} wpisów</span>
@@ -748,10 +752,12 @@ export function LogsPage() {
   // Scraper state
   const [scraperPage, setScraperPage] = useState(1);
   const [scraperStatus, setScraperStatus] = useState<JobLogStatus | undefined>();
+  const [scraperSource, setScraperSource] = useState<string | undefined>();
   const { data: scraperData, isLoading: scraperLoading, refetch: refetchScraper } = useScraperLogs({
     page: scraperPage,
     limit: 50,
     status: scraperStatus,
+    jobName: scraperSource,
   });
 
   // Embedding state
@@ -847,7 +853,22 @@ export function LogsPage() {
               total={scraperData?.meta.total}
               onRefresh={() => void refetchScraper()}
               isLoading={scraperLoading}
-            />
+            >
+              <Select
+                value={scraperSource ?? "ALL"}
+                onValueChange={(v) => { setScraperSource(!v || v === "ALL" ? undefined : v); setScraperPage(1); }}
+              >
+                <SelectTrigger className="w-[180px] h-8 text-xs">
+                  <SelectValue placeholder="Wszystkie źródła" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Wszystkie źródła</SelectItem>
+                  <SelectItem value="bk.sync">BK (Baza Konk.)</SelectItem>
+                  <SelectItem value="ez.sync">e-Zamówienia</SelectItem>
+                  <SelectItem value="pz.sync">Platforma Zakupowa</SelectItem>
+                </SelectContent>
+              </Select>
+            </FilterBar>
             <ScrollArea className="w-full">
               <ScraperLogsTable
                 logs={scraperData?.data ?? []}

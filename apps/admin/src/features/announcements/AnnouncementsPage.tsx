@@ -19,7 +19,7 @@ import {
   type AnnouncementSource,
   type AnnouncementStatus,
 } from "@leadfinder/contracts";
-import { fetchAnnouncements, triggerScraper, fetchQueueStatus, backfillDeadlines, backfillKind } from "./announcements-api";
+import { fetchAnnouncements, triggerScraper, triggerEzScraper, triggerPzScraper, fetchQueueStatus, backfillDeadlines, backfillKind } from "./announcements-api";
 import {
   RawDataDialog,
   SOURCE_LABELS,
@@ -60,13 +60,31 @@ function ScraperPanel() {
     refetchInterval: 5000,
   });
 
-  const triggerMutation = useMutation({
+  const triggerBkMutation = useMutation({
     mutationFn: triggerScraper,
     onSuccess: (data) => {
-      toast.success(`Scraper uruchomiony (job ${data.jobId})`);
+      toast.success(`Scraper BK uruchomiony (job ${data.jobId})`);
       void queryClient.invalidateQueries({ queryKey: ["scraper-queue-status"] });
     },
-    onError: () => toast.error("Nie udało się uruchomić scrapera"),
+    onError: () => toast.error("Nie udało się uruchomić scrapera BK"),
+  });
+
+  const triggerEzMutation = useMutation({
+    mutationFn: triggerEzScraper,
+    onSuccess: (data) => {
+      toast.success(`Scraper e-Zamówienia uruchomiony (job ${data.jobId})`);
+      void queryClient.invalidateQueries({ queryKey: ["scraper-queue-status"] });
+    },
+    onError: () => toast.error("Nie udało się uruchomić scrapera e-Zamówienia"),
+  });
+
+  const triggerPzMutation = useMutation({
+    mutationFn: triggerPzScraper,
+    onSuccess: (data) => {
+      toast.success(`Scraper Platforma Zakupowa uruchomiony (job ${data.jobId})`);
+      void queryClient.invalidateQueries({ queryKey: ["scraper-queue-status"] });
+    },
+    onError: () => toast.error("Nie udało się uruchomić scrapera Platforma Zakupowa"),
   });
 
   const backfillDeadlinesMutation = useMutation({
@@ -88,7 +106,8 @@ function ScraperPanel() {
 
   return (
     <Card>
-      <CardContent className="py-4">
+      <CardContent className="py-4 space-y-3">
+        {/* Queue status row */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span
@@ -98,9 +117,9 @@ function ScraperPanel() {
               )}
             />
             <div>
-              <p className="text-xs font-medium text-muted-foreground">Scraper BK</p>
+              <p className="text-xs font-medium text-muted-foreground">Kolejka scraperów</p>
               <p className="text-sm font-medium">
-                {isActive ? "Aktywny" : "Gotowy"}
+                {isActive ? "Aktywna" : "Gotowa"}
                 {counts && (
                   <span className="ml-2 text-xs text-muted-foreground">
                     aktywne: {counts.active} · oczekujące: {counts.waiting} · ukończone:{" "}
@@ -110,24 +129,52 @@ function ScraperPanel() {
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-3">
-            {lastRun?.finishedAt && (
-              <p className="text-xs text-muted-foreground">
-                Ostatni run:{" "}
-                <span className="text-foreground">
-                  {formatDistanceToNow(new Date(lastRun.finishedAt), {
-                    addSuffix: true,
-                    locale: pl,
-                  })}
+          {lastRun?.finishedAt && (
+            <p className="text-xs text-muted-foreground">
+              Ostatni run:{" "}
+              <span className="text-foreground">
+                {formatDistanceToNow(new Date(lastRun.finishedAt), {
+                  addSuffix: true,
+                  locale: pl,
+                })}
+              </span>
+              {lastFailed?.failedReason && (
+                <span className="ml-2 text-destructive">
+                  ⚠ {lastFailed.failedReason.slice(0, 60)}
                 </span>
-                {lastFailed?.failedReason && (
-                  <span className="ml-2 text-destructive">
-                    ⚠ {lastFailed.failedReason.slice(0, 60)}
-                  </span>
-                )}
-              </p>
-            )}
+              )}
+            </p>
+          )}
+        </div>
+
+        <Separator />
+
+        {/* Trigger buttons row */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => triggerBkMutation.mutate()}
+            disabled={triggerBkMutation.isPending || isActive}
+          >
+            {triggerBkMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom BK"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => triggerEzMutation.mutate()}
+            disabled={triggerEzMutation.isPending || isActive}
+          >
+            {triggerEzMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom e-Zamówienia"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => triggerPzMutation.mutate()}
+            disabled={triggerPzMutation.isPending || isActive}
+          >
+            {triggerPzMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom Platforma Zakupowa"}
+          </Button>
+          <div className="ml-auto flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
@@ -145,13 +192,6 @@ function ScraperPanel() {
               title="Sklasyfikuj rodzaj dla ogłoszeń bez klasyfikacji"
             >
               {backfillKindMutation.isPending ? "Trwa…" : "Backfill rodzaju"}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => triggerMutation.mutate()}
-              disabled={triggerMutation.isPending || isActive}
-            >
-              {triggerMutation.isPending ? "Kolejkowanie…" : isActive ? "Trwa…" : "Uruchom scraper"}
             </Button>
           </div>
         </div>

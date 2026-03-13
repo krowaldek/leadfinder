@@ -79,12 +79,13 @@ export interface ReembedProgress {
 
 async function fetchLogs(
   type: "scraper" | "embedding" | "reports",
-  params: { page?: number; limit?: number; status?: JobLogStatus },
+  params: { page?: number; limit?: number; status?: JobLogStatus; jobName?: string },
 ): Promise<LogsResponse> {
   const query = new URLSearchParams();
   if (params.page) query.set("page", String(params.page));
   if (params.limit) query.set("limit", String(params.limit));
   if (params.status) query.set("status", params.status);
+  if (params.jobName) query.set("jobName", params.jobName);
   const res = await api.get<LogsResponse>(`/logs/${type}?${query}`);
   return res.data;
 }
@@ -105,14 +106,15 @@ export interface UseLogsOptions {
   page?: number;
   limit?: number;
   status?: JobLogStatus;
+  jobName?: string;
   refetchInterval?: number;
 }
 
 export function useScraperLogs(opts: UseLogsOptions = {}) {
-  const { page = 1, limit = 50, status, refetchInterval = 10_000 } = opts;
+  const { page = 1, limit = 50, status, jobName, refetchInterval = 10_000 } = opts;
   return useQuery<LogsResponse>({
-    queryKey: ["logs", "scraper", { page, limit, status }],
-    queryFn: () => fetchLogs("scraper", { page, limit, status }),
+    queryKey: ["logs", "scraper", { page, limit, status, jobName }],
+    queryFn: () => fetchLogs("scraper", { page, limit, status, jobName }),
     refetchInterval,
   });
 }

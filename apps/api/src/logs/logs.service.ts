@@ -9,6 +9,7 @@ export interface LogsQuery {
   page?: number;
   limit?: number;
   status?: JobLogStatus;
+  jobName?: string;
 }
 
 export interface LogsResult {
@@ -110,6 +111,7 @@ export class LogsService {
     const where = {
       type,
       ...(query.status ? { status: query.status } : {}),
+      ...(query.jobName ? { jobName: query.jobName } : {}),
     };
 
     const [total, rows] = await Promise.all([

@@ -1,0 +1,105 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "dev",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"dev"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "admin-dev",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"--filter",
+				"@leadfinder/admin",
+				"dev",
+				"--",
+				"--host",
+				"0.0.0.0"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "docker-version-check",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"version",
+				"--format",
+				"{{.Server.Version}}"
+			],
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "redis-6380",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"run",
+				"--rm",
+				"--name",
+				"leadfinder-redis",
+				"-p",
+				"6380:6379",
+				"redis:7-alpine"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "api-dev",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"--filter",
+				"@leadfinder/api",
+				"dev"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "api-dev-stable",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"--filter",
+				"@leadfinder/api",
+				"dev"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "dev-after-db-sync",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"dev"
+			],
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "Admin Dev",
+			"type": "shell",
+			"command": "/Users/lukaszwojcieszynski/.nvm/versions/node/v20.19.0/bin/pnpm",
+			"args": [
+				"--filter",
+				"@leadfinder/admin",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

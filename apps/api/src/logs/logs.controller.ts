@@ -24,8 +24,9 @@ export class LogsController {
     @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query("limit", new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query("status") status?: JobLogStatus,
+    @Query("jobName") jobName?: string,
   ) {
-    return this.logsService.findByType("SCRAPER", { page, limit, status });
+    return this.logsService.findByType("SCRAPER", { page, limit, status, jobName });
   }
 
   @Get("embedding")

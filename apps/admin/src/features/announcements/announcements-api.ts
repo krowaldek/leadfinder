@@ -46,6 +46,16 @@ export async function triggerScraper() {
   return response.data as { jobId: string; status: string };
 }
 
+export async function triggerEzScraper() {
+  const response = await api.post("/scrapers/ez/trigger");
+  return response.data as { jobId: string; status: string };
+}
+
+export async function triggerPzScraper() {
+  const response = await api.post("/scrapers/pz/trigger");
+  return response.data as { jobId: string; status: string };
+}
+
 export async function backfillDeadlines() {
   const response = await api.post("/scrapers/bk/backfill-deadlines");
   return response.data as { updated: number };

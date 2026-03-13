@@ -17,6 +17,8 @@ import { Roles } from "../common/roles.decorator.js";
 import { SystemRole } from "@prisma/client";
 import { SCRAPER_QUEUE, ScraperJob } from "./scraper-queue.constants.js";
 import { ScraperScheduleService } from "./scraper-queue.module.js";
+import { EzScraperService } from "./ez/ez.scraper.service.js";
+import { PzScraperService } from "./pz/pz.scraper.service.js";
 import { EmbeddingService } from "../embedding/embedding.service.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { z } from "zod";
@@ -41,6 +43,10 @@ export class ScraperController {
     private readonly queue: Queue,
     @Inject(ScraperScheduleService)
     private readonly scheduleService: ScraperScheduleService,
+    @Inject(EzScraperService)
+    private readonly ezScraper: EzScraperService,
+    @Inject(PzScraperService)
+    private readonly pzScraper: PzScraperService,
     @Inject(EmbeddingService)
     private readonly embeddingService: EmbeddingService,
     @Inject(PrismaService)
@@ -53,6 +59,38 @@ export class ScraperController {
   async triggerBk() {
     const job = await this.queue.add(
       ScraperJob.BK_SYNC,
+      {},
+      {
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 50 },
+      },
+    );
+
+    return { jobId: job.id, status: "queued" };
+  }
+
+  /** Manually trigger an ezamowienia.gov.pl scraper run */
+  @Post("ez/trigger")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async triggerEz() {
+    const job = await this.queue.add(
+      ScraperJob.EZ_SYNC,
+      {},
+      {
+        removeOnComplete: { count: 20 },
+        removeOnFail: { count: 50 },
+      },
+    );
+
+    return { jobId: job.id, status: "queued" };
+  }
+
+  /** Manually trigger a Platforma Zakupowa scraper run */
+  @Post("pz/trigger")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async triggerPz() {
+    const job = await this.queue.add(
+      ScraperJob.PZ_SYNC,
       {},
       {
         removeOnComplete: { count: 20 },
