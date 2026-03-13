@@ -16,9 +16,9 @@
     "prisma:seed": "pnpm --filter @leadfinder/api prisma:seed"
   },
   "devDependencies": {
-    "oxfmt": "latest",
-    "oxlint": "latest",
-    "turbo": "2.8.13",
+    "oxfmt": "0.40.0",
+    "oxlint": "1.55.0",
+    "turbo": "2.8.16",
     "typescript": "5.9.3"
   }
 }
