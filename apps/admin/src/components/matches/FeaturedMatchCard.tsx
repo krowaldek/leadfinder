@@ -227,9 +227,7 @@ export function FeaturedMatchCard({
         {/* Bottom Actions Row */}
         <div className="mt-12 flex flex-col items-stretch gap-4 sm:flex-row sm:items-center">
           <a
-            href={panelHref}
-            target="_blank"
-            rel="noreferrer"
+              href={match.announcement.url}
             className={cn(
               buttonVariants(),
               "h-14 flex-1 rounded-2xl bg-blue-600 text-base font-bold text-white transition-colors hover:bg-blue-700"
