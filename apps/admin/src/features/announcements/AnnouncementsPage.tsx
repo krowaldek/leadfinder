@@ -45,6 +45,33 @@ const STATUS_OPTIONS: { value: AnnouncementStatus | "ALL"; label: string }[] = [
   { value: "UNKNOWN", label: "Nieznany" },
 ];
 
+function readInitialAnnouncementFilters(): {
+  search: string;
+  source: AnnouncementSource | "ALL";
+  status: AnnouncementStatus | "ALL";
+} {
+  if (typeof window === "undefined") {
+    return { search: "", source: "ALL", status: "ALL" };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const search = params.get("search")?.trim() ?? "";
+  const source = params.get("source");
+  const status = params.get("status");
+
+  return {
+    search,
+    source:
+      source && SOURCE_OPTIONS.some((option) => option.value === source)
+        ? (source as AnnouncementSource)
+        : "ALL",
+    status:
+      status && STATUS_OPTIONS.some((option) => option.value === status)
+        ? (status as AnnouncementStatus)
+        : "ALL",
+  };
+}
+
 function statusVariant(status: AnnouncementStatus): "default" | "secondary" | "outline" | "destructive" {
   if (status === "OPEN") return "default";
   if (status === "AWARDED") return "secondary";
@@ -201,11 +228,12 @@ function ScraperPanel() {
 }
 
 export function AnnouncementsPage() {
-  const [inputSearch, setInputSearch] = useState("");
+  const initialFilters = readInitialAnnouncementFilters();
+  const [inputSearch, setInputSearch] = useState(initialFilters.search);
   const debouncedSearch = useDebounce(inputSearch, 400);
   const [page, setPage] = useState(1);
-  const [sourceFilter, setSourceFilter] = useState<AnnouncementSource | "ALL">("ALL");
-  const [statusFilter, setStatusFilter] = useState<AnnouncementStatus | "ALL">("ALL");
+  const [sourceFilter, setSourceFilter] = useState<AnnouncementSource | "ALL">(initialFilters.source);
+  const [statusFilter, setStatusFilter] = useState<AnnouncementStatus | "ALL">(initialFilters.status);
   const [selected, setSelected] = useState<Announcement | null>(null);
   const [reportTarget, setReportTarget] = useState<Announcement | null>(null);
   const [aiDialogOpen, setAiDialogOpen] = useState(false);

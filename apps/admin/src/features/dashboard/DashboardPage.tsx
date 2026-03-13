@@ -460,8 +460,8 @@ export function DashboardPage() {
         <StatCard
           icon={Sparkles}
           label="Z raportem"
-          value={summary.itemsWithReport}
-          sub={`${reportPct}% całości`}
+          value={`${reportPct}%`}
+          sub={`${fmt(summary.itemsWithReport)} z ${fmt(summary.totalItems)} ogłoszeń`}
         />
       </div>
 

@@ -7,6 +7,15 @@ import { pl } from "date-fns/locale";
 import { ExternalLink } from "lucide-react";
 import type { ClientMatchResponse } from "@leadfinder/contracts";
 
+function buildAnnouncementPanelHref(announcement: Pick<ClientMatchResponse["announcement"], "externalId" | "sourceSystem">) {
+  const params = new URLSearchParams({
+    search: announcement.externalId,
+    source: announcement.sourceSystem,
+  });
+
+  return `/announcements?${params.toString()}`;
+}
+
 // ── Stałe (tożsame z ClientMatchesPage) ─────────────────────────────────────
 
 const KIND_LABELS: Record<string, string> = {
@@ -128,6 +137,12 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
             </Badge>
             <Badge variant="secondary" className="font-mono text-xs">#{ann.externalId}</Badge>
             <a
+              href={buildAnnouncementPanelHref(ann)}
+              className="flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              W panelu ogłoszeń
+            </a>
+            <a
               href={ann.url}
               target="_blank"
               rel="noreferrer"
@@ -171,6 +186,11 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
           {/* Wynik dopasowania */}
           <Section title="Dlaczego to dopasowanie?">
             <SimilarityBar similarity={match.similarity} />
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+              Dopasowanie jest liczone na podstawie embeddingu ogłoszenia i profilu klienta. Jeśli raport ogłoszenia
+              jest pusty, system mógł dopasować pozycję na bazie `searchContext` i pozostałych danych użytych do
+              wektoryzacji.
+            </div>
           </Section>
 
           <Separator />
@@ -213,9 +233,15 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
           ) : (
             <>
               <Section title="Raport ogłoszenia (użyty do embeddingu)">
-                <p className="text-xs text-muted-foreground">
-                  Brak raportu dla tego ogłoszenia. Embedding mógł być wygenerowany bez pełnej analizy.
-                </p>
+                <div className="grid gap-2 rounded-lg border border-dashed bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Brak raportu dla tego ogłoszenia.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    To nie blokuje dopasowania — wynik mógł zostać wyliczony na podstawie `searchContext`, typu
+                    ogłoszenia i innych danych użytych do embeddingu.
+                  </p>
+                </div>
               </Section>
               <Separator />
             </>

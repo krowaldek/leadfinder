@@ -23,6 +23,7 @@ export class AnnouncementsService {
         title ILIKE ${like}
         OR description ILIKE ${like}
         OR "searchContext" ILIKE ${like}
+        OR "externalId" ILIKE ${like}
         OR "rawData"::text ILIKE ${like}
       )`);
     }

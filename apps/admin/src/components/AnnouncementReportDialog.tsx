@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileText, RefreshCw, Copy, Check } from "lucide-react";
@@ -19,7 +19,7 @@ interface AnnouncementReportDialogProps {
   open: boolean;
   onClose: () => void;
   allowGeneration?: boolean;
-  emptyStateMessage?: string;
+  emptyStateMessage?: ReactNode;
 }
 
 export function AnnouncementReportDialog({

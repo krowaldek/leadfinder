@@ -16,6 +16,15 @@ import { MatchDetailSheet } from "@/components/MatchDetailSheet";
 import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
 import type { Announcement } from "@leadfinder/contracts";
 
+function buildAnnouncementPanelHref(announcement: Pick<ClientMatchResponse["announcement"], "externalId" | "sourceSystem">) {
+  const params = new URLSearchParams({
+    search: announcement.externalId,
+    source: announcement.sourceSystem,
+  });
+
+  return `/announcements?${params.toString()}`;
+}
+
 // ── Labels ───────────────────────────────────────────────────────────────────
 
 const MATCH_STATUS_LABELS: Record<string, string> = {
@@ -333,6 +342,13 @@ export function ClientMatchesPage() {
             <FileText className="size-3.5" />
           </Button>
           <a
+            href={buildAnnouncementPanelHref(row.announcement)}
+            className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2 hover:text-primary/80"
+            title="Otwórz w liście ogłoszeń"
+          >
+            Ogłoszenie
+          </a>
+          <a
             href={row.announcement.url}
             target="_blank"
             rel="noopener noreferrer"
@@ -511,7 +527,14 @@ export function ClientMatchesPage() {
         open={!!reportTarget}
         onClose={() => setReportTarget(null)}
         allowGeneration={false}
-        emptyStateMessage="Brak raportu dla tego ogłoszenia."
+        emptyStateMessage={(
+          <>
+            Brak raportu dla tego ogłoszenia.
+            <br />
+            Samo dopasowanie mogło jednak zostać wyliczone na podstawie embeddingu i `searchContext`, nawet jeśli
+            raport nie został jeszcze zapisany.
+          </>
+        )}
       />
     </div>
   );

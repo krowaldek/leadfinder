@@ -1,5 +1,15 @@
 import { AnnouncementStatus, AnnouncementSource, Prisma } from "@prisma/client";
 
+export interface EzAttachmentLike {
+  name?: string;
+  type?: string;
+  url?: string;
+  file?: {
+    uri?: string;
+    name?: string;
+  };
+}
+
 const EZ_PORTAL_BASE = "https://ezamowienia.gov.pl/mp-client/search/list";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +22,9 @@ const EZ_PORTAL_BASE = "https://ezamowienia.gov.pl/mp-client/search/list";
  * The htmlBody is dropped immediately after fetching each page to avoid OOM
  * when loading hundreds of pages into memory before any filtering.
  */
-export type EzNoticeSummary = Omit<EzNotice, "htmlBody">;
+export type EzNoticeSummary = Omit<EzNotice, "htmlBody"> & {
+  attachments?: EzAttachmentLike[];
+};
 
 /** Single notice item returned by the ezamowienia list endpoint */
 export interface EzNotice {

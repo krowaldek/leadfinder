@@ -49,6 +49,11 @@ Raport MUSI zawierać następujące sekcje:
 ## Przedmiot zamówienia
 Konkretny, wyczerpujący opis — co jest dostarczane, jakie usługi lub roboty są realizowane i jaki jest cel końcowy.
 
+## Lokalizacja realizacji
+Wskaż miejsce realizacji, dostawy lub świadczenia usługi. Jeśli dane są niepełne, wypisz wszystko co wiadomo: miasto,
+województwo, adres dostawy, obszar realizacji, siedzibę zamawiającego albo informację, że lokalizacja nie została
+jednoznacznie podana.
+
 ## Szczegółowy zakres prac
 Dla KAŻDEJ pozycji lub zadania podaj:
 - dokładny opis czynności lub produktu
@@ -190,6 +195,11 @@ export class AnnouncementReportService {
       description: announcement.description,
       searchContext: announcement.searchContext,
     });
+    const locationContext = this.extractLocationContext(announcement.sourceSystem, rawData, {
+      title: announcement.title,
+      description: announcement.description,
+      searchContext: announcement.searchContext,
+    });
 
     const attachmentsContext =
       attachmentTexts.length > 0
@@ -204,6 +214,7 @@ export class AnnouncementReportService {
       `OGŁOSZENIE: ${announcement.title}`,
       announcement.description ? `OPIS: ${announcement.description}` : null,
       announcement.searchContext ? `KONTEKST: ${announcement.searchContext}` : null,
+      locationContext ? `LOKALIZACJA: ${locationContext}` : null,
       `\nPOZYCJE:\n${itemsContext}`,
       attachmentsContext,
     ]
@@ -217,6 +228,7 @@ export class AnnouncementReportService {
         searchContext: announcement.searchContext,
       },
       rawData,
+      locationContext,
       itemsContext,
       attachmentTexts.length,
     );
@@ -286,6 +298,7 @@ export class AnnouncementReportService {
   private buildFallbackReport(
     announcement: { title: string; description: string | null; searchContext: string },
     rawData: ReportRawData | null,
+    locationContext: string | null,
     itemsContext: string,
     attachmentsProcessed: number,
   ): string {
@@ -304,6 +317,9 @@ export class AnnouncementReportService {
       "## Przedmiot zamówienia",
       announcement.title,
       announcement.description ?? "Brak dodatkowego opisu w rekordzie ogłoszenia.",
+      "",
+      "## Lokalizacja realizacji",
+      locationContext ?? "Brak jednoznacznej lokalizacji w danych źródłowych — wymagana ręczna weryfikacja.",
       "",
       "## Szczegółowy zakres prac",
       itemsContext,
@@ -326,6 +342,61 @@ export class AnnouncementReportService {
       "## Ryzyka i zalecenia dla wykonawcy",
       `Raport awaryjny wygenerowany bez wsparcia LLM. Przetworzono ${attachmentsProcessed} załącznik(i/ów); zalecana ręczna weryfikacja szczegółów technicznych i wyceny.`,
     ].join("\n");
+  }
+
+  private extractLocationContext(
+    sourceSystem: string,
+    rawData: ReportRawData | null,
+    announcement: { title: string; description: string | null; searchContext: string },
+  ): string | null {
+    const candidates: string[] = [];
+
+    const push = (value: unknown, label?: string) => {
+      const normalized = this.cleanLocationValue(value);
+      if (!normalized) return;
+      candidates.push(label ? `${label}: ${normalized}` : normalized);
+    };
+
+    if (sourceSystem === "BAZA_KONKURENCYJNOSCI") {
+      push(rawData?.fulfillment_place, "Miejsce realizacji");
+    }
+
+    if (sourceSystem === "E_ZAMOWIENIA") {
+      push(rawData?.organizationCity, "Miejscowość");
+      push(rawData?.organizationProvince, "Województwo");
+      push(rawData?.organizationCountry, "Kraj");
+      push(rawData?.organizationName, "Zamawiający");
+    }
+
+    if (sourceSystem === "PLATFORMA_ZAKUPOWA") {
+      push(rawData?.adres_dostawy, "Adres dostawy");
+      push(rawData?.firma_wystawiajaca, "Zamawiający");
+    }
+
+    const searchContextLocation = this.extractLocationFromSearchContext(announcement.searchContext);
+    if (searchContextLocation) {
+      candidates.push(searchContextLocation);
+    }
+
+    const unique = candidates.filter((value, index, array) => array.indexOf(value) === index);
+    return unique.length > 0 ? unique.join(" | ") : null;
+  }
+
+  private extractLocationFromSearchContext(searchContext: string): string | null {
+    if (!searchContext) return null;
+
+    const parts = searchContext
+      .split("|")
+      .map((part) => part.trim())
+      .filter((part) => /miejscowość|lokalizacja|adres|województwo|miejsce realizacji/i.test(part));
+
+    return parts.length > 0 ? parts.join(" | ") : null;
+  }
+
+  private cleanLocationValue(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length > 0 ? normalized : null;
   }
 
   private buildItemsContext(
