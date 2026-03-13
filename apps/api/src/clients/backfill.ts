@@ -31,13 +31,6 @@ async function main() {
 
   for (const client of clients) {
     try {
-      await prisma.$executeRaw`
-        UPDATE clients
-        SET "profileEmbedding" = NULL,
-            "syntheticAnnouncementText" = NULL,
-            "updatedAt" = NOW()
-        WHERE id = ${client.id}::uuid
-      `;
       const matchCount = await clientMatchingService.matchClient(client.id);
       ok++;
       console.log(`  ✓ ${client.companyName} — ${matchCount} matches`);

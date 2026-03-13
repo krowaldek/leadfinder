@@ -109,14 +109,6 @@ async function runClientBackfill(
 
   for (const client of clients) {
     try {
-      await prisma.$executeRaw`
-        UPDATE clients
-        SET "profileEmbedding" = NULL,
-            "syntheticAnnouncementText" = NULL,
-            "updatedAt" = NOW()
-        WHERE id = ${client.id}::uuid
-      `;
-
       const matchCount = await clientMatchingService.matchClient(client.id);
       ok += 1;
       console.log(`[backfill] ✓ ${client.companyName} — ${matchCount} matches`);

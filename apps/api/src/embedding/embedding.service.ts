@@ -200,7 +200,7 @@ export class EmbeddingService {
       }
     }
 
-    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
     const analysis = await this.analyseAnnouncement(announcement, attachmentTexts, apiKey, chatModel);
 
     await this.prisma.announcement.update({

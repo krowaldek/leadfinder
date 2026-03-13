@@ -113,7 +113,7 @@ export class ClientPromptService implements OnModuleDestroy {
     if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
     const chatModel =
-      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
 
     const missingFields = this.getMissingFields(session.collected);
     const systemPrompt = this.buildSystemPrompt(session.collected, missingFields);

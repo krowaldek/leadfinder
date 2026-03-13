@@ -6,7 +6,19 @@ import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
-import type { UpdateClient, CreateProject, UpdateProject, CreateTopic, UpdateTopic } from "@leadfinder/contracts";
+import {
+  buildTopicPromptFromProfile,
+  parseTopicMatchingProfile,
+  topicMatchingProfileSchema,
+  type TopicMatchingProfile,
+} from "@leadfinder/contracts";
+import type {
+  UpdateClient,
+  CreateProject,
+  UpdateProject,
+  CreateTopic,
+  UpdateTopic,
+} from "@leadfinder/contracts";
 import { CLIENT_MATCHING_QUEUE, ClientMatchingJob } from "./client-matching.constants.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "../embedding/embedding-queue.constants.js";
 
@@ -229,12 +241,14 @@ export class ClientsService {
     });
     if (!project) throw new NotFoundException("Project not found");
 
+    const prepared = this.prepareTopicPayload(data.prompt, data.negativeKeywords ?? [], data.matchingProfile);
+
     const topic = await this.prisma.topic.create({
       data: {
         projectId,
         title: data.title,
-        prompt: data.prompt,
-        negativeKeywords: data.negativeKeywords ?? [],
+        prompt: prepared.prompt,
+        negativeKeywords: prepared.negativeKeywords,
         embeddingStatus: "PENDING",
       },
       include: { _count: { select: { matches: true } } },
@@ -254,17 +268,24 @@ export class ClientsService {
     });
     if (!topic) throw new NotFoundException("Topic not found");
 
+    const nextPrompt = data.prompt ?? topic.prompt;
+    const nextNegativeKeywords = data.negativeKeywords ?? topic.negativeKeywords;
+    const nextProfile = data.matchingProfile ?? parseTopicMatchingProfile(topic.prompt, topic.negativeKeywords);
+    const prepared = this.prepareTopicPayload(nextPrompt, nextNegativeKeywords, nextProfile);
+
     const promptChanged =
-      data.prompt !== undefined && data.prompt !== topic.prompt;
+      prepared.prompt !== topic.prompt;
 
     const updated = await this.prisma.topic.update({
       where: { id: topicId },
       data: {
         ...(data.title !== undefined && { title: data.title }),
-        ...(data.prompt !== undefined && { prompt: data.prompt }),
-        ...(data.negativeKeywords !== undefined && {
-          negativeKeywords: data.negativeKeywords,
-        }),
+        ...(data.prompt !== undefined || data.matchingProfile !== undefined
+          ? { prompt: prepared.prompt }
+          : {}),
+        ...(data.negativeKeywords !== undefined || data.matchingProfile !== undefined
+          ? { negativeKeywords: prepared.negativeKeywords }
+          : {}),
         // Reset embedding when prompt changes so it gets re-embedded
         ...(promptChanged && { embeddingStatus: "PENDING" }),
       },
@@ -391,11 +412,13 @@ export class ClientsService {
     updatedAt: Date;
     _count: { matches: number };
   }) {
+    const matchingProfile = parseTopicMatchingProfile(topic.prompt, topic.negativeKeywords);
     return {
       id: topic.id,
       projectId: topic.projectId,
       title: topic.title,
-      prompt: topic.prompt,
+      prompt: matchingProfile?.summary ?? topic.prompt,
+      matchingProfile: matchingProfile ?? undefined,
       embeddingStatus: topic.embeddingStatus as "PENDING" | "EMBEDDED" | "ERROR",
       negativeKeywords: topic.negativeKeywords,
       matchCount: topic._count.matches,
@@ -440,7 +463,7 @@ export class ClientsService {
 
   async onboard(activity: string, email: string) {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
 
     // Derive sensible defaults from email
     const [localPart, domain] = email.split("@");
@@ -456,7 +479,13 @@ export class ClientsService {
     let companyName = defaultCompanyName;
     let industry = activity.slice(0, 120);
     let topicTitle = activity.slice(0, 100);
-    let topicPrompt = activity;
+    let topicProfile: TopicMatchingProfile = topicMatchingProfileSchema.parse({
+      summary: activity.length >= 10 ? activity : `Zamówienia związane z: ${activity}`,
+      mustHave: [],
+      niceToHave: [],
+      exclude: [],
+      expectedKinds: [],
+    });
 
     // Try LLM extraction (graceful degradation if no key)
     if (apiKey) {
@@ -476,12 +505,20 @@ Odpowiedz WYŁĄCZNIE jako obiekt JSON (bez markdown, bez żadnego dodatkowego t
   "companyName": "Krótka nazwa firmy lub branży (jeśli brak danych — null)",
   "industry": "Branża i specjalizacja firmy (1-2 zdania)",
   "topicTitle": "Zwięzły tytuł szukanego rodzaju zamówień (max 80 znaków)",
-  "topicPrompt": "BARDZO ROZBUDOWANY opis wyszukiwania — MINIMUM 500 ZNAKÓW. Pisz ciągłym, bogatym tekstem jak opis zakresu zamówienia w przetargu. Zawrzyj: (1) dokładne nazwy szukanych usług/towarów/robót budowlanych, (2) wszystkie synonimy i alternatywne sformułowania, (3) typowe frazy z ogłoszeń przetargowych (np. dostawa, świadczenie usług, wykonanie, wdrożenie, serwis, obsługa, szkolenie, modernizacja, remont, budowa), (4) powiązane kategorie, specjalizacje i branże, (5) kontekst i cel zamówień. Im więcej słów kluczowych i wariantów terminologicznych — tym lepsze dopasowanie do ogłoszeń."
+  "topicProfile": {
+    "summary": "BARDZO ROZBUDOWANY opis wyszukiwania — MINIMUM 300 ZNAKÓW. Ma opisywać dokładnie czego klient szuka i w jakim kontekście.",
+    "mustHave": ["2-6 najważniejszych fraz, które MUSZĄ wystąpić branżowo"],
+    "niceToHave": ["frazy dodatkowe, mile widziane"],
+    "exclude": ["frazy wykluczające złe dopasowania"],
+    "expectedKinds": ["DOSTAWA | USLUGA | ROBOTY_BUDOWLANE | SZKOLENIE | USLUGA_IT | USLUGA_BADAWCZO_ROZWOJOWA | DORADZTWO | INNE"]
+  }
 }
 
-PRZYKŁAD dobrego topicPrompt dla firmy IT: "Firma świadczy usługi informatyczne, wdrożeniowe i integracyjne. Szuka zamówień na: dostawę oprogramowania, licencji i systemów IT, wdrożenie systemów ERP, CRM, HRM i systemów dziedzinowych, rozwiązania chmurowe, usługi programistyczne, tworzenie i utrzymanie aplikacji webowych i mobilnych, usługi hostingowe i infrastruktury IT, dostawę sprzętu komputerowego, serwerów i urządzeń sieciowych, serwis i wsparcie techniczne, helpdesk, utrzymanie systemów informatycznych, cyberbezpieczeństwo, audyty bezpieczeństwa IT, szkolenia informatyczne, digitalizacja procesów, transformacja cyfrowa."
-
-WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele różnych wariantów ogłoszeń z tej branży. Każde słowo kluczowe zwiększa szanse na dopasowanie.`),
+Zasady:
+- mustHave to rdzeń branży i zakresu, bez ogólników typu "usługa" czy "obsługa"
+- niceToHave to dodatki i powiązane frazy
+- exclude ma eliminować typowe pomyłki i sąsiednie, ale błędne branże
+- expectedKinds wybierz tylko realne typy zamówień dla klienta`),
           new HumanMessage(`Opis działalności/czego szukam: ${activity}\nEmail: ${email}`),
         ]);
 
@@ -489,13 +526,15 @@ WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele ró
           companyName?: string | null;
           industry?: string | null;
           topicTitle?: string | null;
-          topicPrompt?: string | null;
+          topicProfile?: TopicMatchingProfile | null;
         };
 
         if (parsed.companyName) companyName = parsed.companyName;
         if (parsed.industry) industry = parsed.industry;
         if (parsed.topicTitle) topicTitle = parsed.topicTitle;
-        if (parsed.topicPrompt) topicPrompt = parsed.topicPrompt;
+        if (parsed.topicProfile) {
+          topicProfile = topicMatchingProfileSchema.parse(parsed.topicProfile);
+        }
       } catch (err) {
         this.logger.warn("Onboard LLM extraction failed, using defaults", (err as Error).message);
       }
@@ -524,8 +563,8 @@ WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele ró
       data: {
         projectId: project.id,
         title: topicTitle,
-        prompt: topicPrompt,
-        negativeKeywords: [],
+        prompt: buildTopicPromptFromProfile(topicProfile),
+        negativeKeywords: topicProfile.exclude,
       },
       include: { _count: { select: { matches: true } } },
     });
@@ -544,7 +583,10 @@ WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele ró
 
   // ── Generate topic prompt via LLM ─────────────────────────────────────────
 
-  async generateTopicPrompt(clientId: string, title: string): Promise<{ prompt: string }> {
+  async generateTopicPrompt(
+    clientId: string,
+    title: string,
+  ): Promise<{ prompt: string; matchingProfile: TopicMatchingProfile }> {
     const client = await this.prisma.client.findUnique({
       where: { id: clientId },
       select: { companyName: true, industry: true },
@@ -556,12 +598,20 @@ WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele ró
 
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) {
+      const fallbackProfile = topicMatchingProfileSchema.parse({
+        summary: `Firma poszukuje zamówień związanych z: ${title}. Uzupełnij dokładnie czego szukasz, jakie elementy są obowiązkowe, a jakie powinny być wykluczone.`,
+        mustHave: [title],
+        niceToHave: [],
+        exclude: [],
+        expectedKinds: [],
+      });
       return {
-        prompt: `Firma poszukuje zamówień związanych z: ${title}. Proszę uzupełnić szczegółowy opis ręcznie.`,
+        prompt: fallbackProfile.summary,
+        matchingProfile: fallbackProfile,
       };
     }
 
-    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
     const llm = new ChatOpenAI({
       apiKey,
       model,
@@ -570,22 +620,64 @@ WAŻNE: topicPrompt musi być tak bogaty semantycznie, żeby pokrywał wiele ró
     });
 
     const result = await llm.invoke([
-      new SystemMessage(`Jesteś ekspertem od zamówień publicznych w Polsce. Generujesz opis tematu wyszukiwania ogłoszeń przetargowych.
+      new SystemMessage(`Jesteś ekspertem od zamówień publicznych w Polsce. Generujesz STRUKTURALNY profil tematu wyszukiwania ogłoszeń przetargowych.
 
-Odpowiedz WYŁĄCZNIE jako obiekt JSON (bez markdown): { "prompt": "..." }
+Odpowiedz WYŁĄCZNIE jako obiekt JSON (bez markdown):
+{
+  "matchingProfile": {
+    "summary": "min. 300 znaków, konkretny opis zakresu",
+    "mustHave": ["frazy obowiązkowe"],
+    "niceToHave": ["frazy dodatkowe"],
+    "exclude": ["frazy wykluczające"],
+    "expectedKinds": ["DOSTAWA | USLUGA | ROBOTY_BUDOWLANE | SZKOLENIE | USLUGA_IT | USLUGA_BADAWCZO_ROZWOJOWA | DORADZTWO | INNE"]
+  }
+}
 
-Wygeneruj BARDZO ROZBUDOWANY opis wyszukiwania — MINIMUM 500 ZNAKÓW. Pisz ciągłym, bogatym tekstem jak opis zakresu zamówienia w przetargu. Zawrzyj:
-(1) dokładne nazwy szukanych usług/towarów/robót budowlanych,
-(2) wszystkie synonimy i alternatywne sformułowania,
-(3) typowe frazy z ogłoszeń przetargowych (dostawa, świadczenie usług, wykonanie, wdrożenie, serwis, obsługa, szkolenie, modernizacja, remont, budowa itd.),
-(4) powiązane kategorie, specjalizacje i branże,
-(5) kontekst i cel zamówień.
-Im więcej słów kluczowych i wariantów terminologicznych — tym lepsze dopasowanie do ogłoszeń.`),
+Zasady:
+- mustHave: rdzeń branży i zakresu, 2-6 pozycji
+- niceToHave: frazy pomocnicze i pokrewne, 0-8 pozycji
+- exclude: typowe błędne sąsiednie branże lub fałszywe skojarzenia, 0-8 pozycji
+- expectedKinds: tylko realne typy zamówień
+- unikaj ogólników typu "obsługa", "usługa", "pracownicy", jeśli nie są istotą tematu`),
       new HumanMessage(`${context ? context + "\n" : ""}Temat wyszukiwania: ${title}`),
     ]);
 
-    const parsed = JSON.parse(result.content as string) as { prompt?: string };
-    return { prompt: parsed.prompt ?? `Zamówienia związane z: ${title}` };
+    const parsed = JSON.parse(result.content as string) as {
+      matchingProfile?: TopicMatchingProfile;
+    };
+    const matchingProfile = topicMatchingProfileSchema.parse(
+      parsed.matchingProfile ?? {
+        summary: `Zamówienia związane z: ${title}`,
+        mustHave: [title],
+        niceToHave: [],
+        exclude: [],
+        expectedKinds: [],
+      },
+    );
+    return { prompt: matchingProfile.summary, matchingProfile };
+  }
+
+  private prepareTopicPayload(
+    prompt: string,
+    negativeKeywords: string[],
+    matchingProfile?: TopicMatchingProfile | null,
+  ) {
+    const profile = matchingProfile
+      ? topicMatchingProfileSchema.parse({
+          ...matchingProfile,
+          exclude:
+            matchingProfile.exclude.length > 0 ? matchingProfile.exclude : negativeKeywords,
+        })
+      : null;
+
+    const storedNegativeKeywords = profile?.exclude ?? [...new Set(negativeKeywords.map((v) => v.trim()).filter(Boolean))];
+    const storedPrompt = profile ? buildTopicPromptFromProfile(profile) : prompt.trim();
+
+    return {
+      prompt: storedPrompt,
+      negativeKeywords: storedNegativeKeywords,
+      matchingProfile: profile,
+    };
   }
 
   // ── Global listings ───────────────────────────────────────────────────────

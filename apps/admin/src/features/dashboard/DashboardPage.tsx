@@ -197,7 +197,7 @@ function JobTypeRow({
 // ── Model config card ─────────────────────────────────────────────────────────
 
 const EMBEDDING_MODEL = "text-embedding-3-small";
-const ANALYSIS_MODEL = "gpt-4o-mini";
+const ANALYSIS_MODEL = "gpt-5-mini";
 const EMBEDDING_DIM = 1536;
 const EMBEDDING_COST_PER_1M = 0.02; // USD
 const ANALYSIS_COST_PER_1M_IN = 0.15;
@@ -257,7 +257,7 @@ function ModelsCard() {
 
 // ── Token usage card ─────────────────────────────────────────────────────────
 
-// gpt-4o-mini pricing (USD / 1M tokens)
+// analysis model pricing (USD / 1M tokens)
 const LLM_COST_IN = 0.15;
 const LLM_COST_OUT = 0.60;
 
@@ -317,7 +317,7 @@ function TokenUsageCard({ tokenStats }: { tokenStats: TokenStats | null }) {
         </div>
 
         <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-          <span className="text-xs text-muted-foreground">Szac. koszt (gpt-4o-mini)</span>
+          <span className="text-xs text-muted-foreground">Szac. koszt ({ANALYSIS_MODEL})</span>
           <span className="font-mono text-sm font-semibold">
             ${estimatedCost < 0.001 ? "<0.001" : estimatedCost.toFixed(3)}
           </span>

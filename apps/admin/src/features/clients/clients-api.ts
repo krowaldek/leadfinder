@@ -16,6 +16,7 @@ import {
   type CreateProject,
   type UpdateProject,
   type CreateTopic,
+  type TopicMatchingProfile,
   type UpdateTopic,
 } from "@leadfinder/contracts";
 
@@ -117,5 +118,5 @@ export async function embedTopic(clientId: string, projectId: string, topicId: s
 
 export async function generateTopicPrompt(clientId: string, title: string) {
   const response = await api.post(`/clients/${clientId}/generate-topic-prompt`, { title });
-  return response.data as { prompt: string };
+  return response.data as { prompt: string; matchingProfile: TopicMatchingProfile };
 }

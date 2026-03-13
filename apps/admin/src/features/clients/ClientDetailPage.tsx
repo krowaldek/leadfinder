@@ -18,13 +18,17 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  announcementKindSchema,
   createProjectSchema,
   createTopicSchema,
+  topicMatchingProfileSchema,
   updateProjectSchema,
   updateTopicSchema,
+  type AnnouncementKind,
   type CreateProject,
   type CreateTopic,
   type ProjectListItem,
+  type TopicMatchingProfile,
   type Topic,
   type UpdateProject,
   type UpdateTopic,
@@ -70,6 +74,19 @@ const EMBEDDING_STATUS_LABELS: Record<string, string> = {
   EMBEDDED: "Zagnieżdżone",
   ERROR: "Błąd",
 };
+
+const ANNOUNCEMENT_KIND_LABELS: Record<AnnouncementKind, string> = {
+  DOSTAWA: "Dostawa",
+  USLUGA: "Usługa",
+  ROBOTY_BUDOWLANE: "Roboty bud.",
+  SZKOLENIE: "Szkolenie",
+  USLUGA_IT: "Usługi IT",
+  USLUGA_BADAWCZO_ROZWOJOWA: "B+R",
+  DORADZTWO: "Doradztwo",
+  INNE: "Inne",
+};
+
+const ANNOUNCEMENT_KIND_OPTIONS = announcementKindSchema.options;
 
 type BadgeVariant = "default" | "secondary" | "outline" | "destructive";
 
@@ -136,6 +153,16 @@ function KeywordInput({
       )}
     </div>
   );
+}
+
+function normalizeMatchingProfile(profile: Partial<TopicMatchingProfile> | null | undefined) {
+  return topicMatchingProfileSchema.parse({
+    summary: profile?.summary?.trim() || "Krótki opis zakresu szukanych zamówień.",
+    mustHave: profile?.mustHave ?? [],
+    niceToHave: profile?.niceToHave ?? [],
+    exclude: profile?.exclude ?? [],
+    expectedKinds: profile?.expectedKinds ?? [],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -322,8 +349,14 @@ function TopicDialog({
     resolver: zodResolver(schema as any),
     defaultValues: {
       title: topic?.title ?? "",
-      prompt: topic?.prompt ?? "",
-      negativeKeywords: topic?.negativeKeywords ?? [],
+      prompt: topic?.matchingProfile?.summary ?? topic?.prompt ?? "",
+      negativeKeywords: topic?.matchingProfile?.exclude ?? topic?.negativeKeywords ?? [],
+      matchingProfile: normalizeMatchingProfile(
+        topic?.matchingProfile ?? {
+          summary: topic?.prompt ?? "Krótki opis zakresu szukanych zamówień.",
+          exclude: topic?.negativeKeywords ?? [],
+        },
+      ),
     },
   });
 
@@ -365,6 +398,14 @@ function TopicDialog({
     try {
       const result = await generateTopicPrompt(clientId, title);
       form.setValue("prompt", result.prompt, { shouldValidate: true, shouldDirty: true });
+      form.setValue("matchingProfile", result.matchingProfile, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+      form.setValue("negativeKeywords", result.matchingProfile.exclude, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
       toast.success("Prompt wygenerowany przez AI");
     } catch {
       toast.error("Nie udało się wygenerować promptu");
@@ -374,11 +415,51 @@ function TopicDialog({
   }
 
   function onSubmit(values: CreateTopic | UpdateTopic) {
+    const nextProfile = normalizeMatchingProfile({
+      ...values.matchingProfile,
+      summary: values.prompt?.trim() || values.matchingProfile?.summary || "",
+      exclude: values.matchingProfile?.exclude ?? values.negativeKeywords ?? [],
+    });
+
+    const payload = {
+      ...values,
+      prompt: nextProfile.summary,
+      matchingProfile: nextProfile,
+      negativeKeywords: nextProfile.exclude,
+    } satisfies CreateTopic | UpdateTopic;
+
     if (topic) {
-      updateMutation.mutate(values as UpdateTopic);
+      updateMutation.mutate(payload as UpdateTopic);
     } else {
-      createMutation.mutate(values as CreateTopic);
+      createMutation.mutate(payload as CreateTopic);
     }
+  }
+
+  const matchingProfile = normalizeMatchingProfile(form.watch("matchingProfile"));
+
+  function setProfileValue<K extends keyof TopicMatchingProfile>(
+    key: K,
+    value: TopicMatchingProfile[K],
+  ) {
+    form.setValue(`matchingProfile.${key}` as never, value as never, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    if (key === "exclude") {
+      form.setValue("negativeKeywords", value as string[], {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    }
+  }
+
+  function toggleExpectedKind(kind: AnnouncementKind) {
+    const current = matchingProfile.expectedKinds;
+    const next = current.includes(kind)
+      ? current.filter((item) => item !== kind)
+      : [...current, kind];
+    setProfileValue("expectedKinds", next);
   }
 
   return (
@@ -423,7 +504,7 @@ function TopicDialog({
             <textarea
               id="topic-prompt"
               {...form.register("prompt")}
-              placeholder="Opisz czego szukasz — im dokładniejszy opis, tym lepsze dopasowania. Mozesz tez kliknac Wygeneruj AI po wpisaniu tytulu."
+              placeholder="Opisz konkretny zakres wyszukiwania — co dokładnie ma być przedmiotem zamówienia, dla kogo i w jakim kontekście."
               rows={6}
               className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none"
             />
@@ -434,14 +515,56 @@ function TopicDialog({
             )}
           </div>
           <div className="space-y-1.5">
-            <Label>Słowa wykluczone</Label>
+            <Label>Frazy obowiązkowe</Label>
             <p className="text-xs text-muted-foreground">
-              Ogłoszenia zawierające te słowa otrzymają obniżoną punktację.
+              Bez tych fraz oferta nie powinna być uznana za sensownie dopasowaną.
             </p>
             <KeywordInput
-              value={form.watch("negativeKeywords") ?? []}
-              onChange={(v) => form.setValue("negativeKeywords", v)}
+              value={matchingProfile.mustHave}
+              onChange={(v) => setProfileValue("mustHave", v)}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Frazy mile widziane</Label>
+            <p className="text-xs text-muted-foreground">
+              Dodatkowe sygnały podbijające wynik, ale nieobowiązkowe.
+            </p>
+            <KeywordInput
+              value={matchingProfile.niceToHave}
+              onChange={(v) => setProfileValue("niceToHave", v)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Frazy wykluczające</Label>
+            <p className="text-xs text-muted-foreground">
+              Typowe błędne skojarzenia i branże, które mają odpadać z dopasowań.
+            </p>
+            <KeywordInput
+              value={matchingProfile.exclude}
+              onChange={(v) => setProfileValue("exclude", v)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Preferowane typy zamówień</Label>
+            <p className="text-xs text-muted-foreground">
+              Zawęża dopasowanie do realnych kategorii ogłoszeń.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ANNOUNCEMENT_KIND_OPTIONS.map((kind) => {
+                const active = matchingProfile.expectedKinds.includes(kind);
+                return (
+                  <Button
+                    key={kind}
+                    type="button"
+                    size="sm"
+                    variant={active ? "default" : "outline"}
+                    onClick={() => toggleExpectedKind(kind)}
+                  >
+                    {ANNOUNCEMENT_KIND_LABELS[kind]}
+                  </Button>
+                );
+              })}
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -558,10 +681,19 @@ function TopicRow({
         {/* Prompt preview */}
         {topic.prompt && (
           <div className="border-t bg-muted/30 px-3 py-2">
-            <p className="text-xs text-muted-foreground/70 mb-1">Opis wyszukiwania (prompt)</p>
+            <p className="mb-1 text-xs text-muted-foreground/70">Opis wyszukiwania</p>
             <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
               {topic.prompt}
             </p>
+            {topic.matchingProfile?.mustHave?.length ? (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {topic.matchingProfile.mustHave.map((term) => (
+                  <Badge key={term} variant="secondary" className="text-[10px] py-0">
+                    + {term}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
             {topic.negativeKeywords.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {topic.negativeKeywords.map((kw) => (
@@ -596,13 +728,45 @@ function TopicRow({
             <DialogTitle>Opis tematu — {topic.title}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Prompt wyszukiwania</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Opis wyszukiwania</p>
             <div className="rounded-md border bg-muted/40 p-4">
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{topic.prompt}</p>
             </div>
+            {topic.matchingProfile?.mustHave?.length ? (
+              <>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Frazy obowiązkowe</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {topic.matchingProfile.mustHave.map((term) => (
+                    <Badge key={term} variant="secondary" className="text-xs">{term}</Badge>
+                  ))}
+                </div>
+              </>
+            ) : null}
+            {topic.matchingProfile?.niceToHave?.length ? (
+              <>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Frazy mile widziane</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {topic.matchingProfile.niceToHave.map((term) => (
+                    <Badge key={term} variant="outline" className="text-xs">{term}</Badge>
+                  ))}
+                </div>
+              </>
+            ) : null}
+            {topic.matchingProfile?.expectedKinds?.length ? (
+              <>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Preferowane typy</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {topic.matchingProfile.expectedKinds.map((kind) => (
+                    <Badge key={kind} variant="outline" className="text-xs">
+                      {ANNOUNCEMENT_KIND_LABELS[kind]}
+                    </Badge>
+                  ))}
+                </div>
+              </>
+            ) : null}
             {topic.negativeKeywords.length > 0 && (
               <>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Słowa wykluczone</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Frazy wykluczające</p>
                 <div className="flex flex-wrap gap-1.5">
                   {topic.negativeKeywords.map((kw) => (
                     <Badge key={kw} variant="outline" className="text-xs">{kw}</Badge>

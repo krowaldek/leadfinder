@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { DataTable, type ColumnDef, type RowAction } from "../../../components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { topicsGlobalListResponseSchema, type TopicWithContext } from "@leadfinder/contracts";
+import { topicsGlobalListResponseSchema, type AnnouncementKind, type TopicWithContext } from "@leadfinder/contracts";
 import { useDebounce } from "@/lib/use-debounce";
 import { embedTopic, rematchClient } from "../clients/clients-api";
 
@@ -17,6 +17,17 @@ const EMBEDDING_STATUS_LABELS: Record<string, string> = {
   PENDING: "Oczekuje",
   EMBEDDED: "Zagnieżdżone",
   ERROR: "Błąd",
+};
+
+const ANNOUNCEMENT_KIND_LABELS: Record<AnnouncementKind, string> = {
+  DOSTAWA: "Dostawa",
+  USLUGA: "Usługa",
+  ROBOTY_BUDOWLANE: "Roboty bud.",
+  SZKOLENIE: "Szkolenie",
+  USLUGA_IT: "Usługi IT",
+  USLUGA_BADAWCZO_ROZWOJOWA: "B+R",
+  DORADZTWO: "Doradztwo",
+  INNE: "Inne",
 };
 
 async function fetchAllTopics(page: number, limit: number) {
@@ -45,7 +56,9 @@ export function TopicsPage() {
         t.title.toLowerCase().includes(q) ||
         t.clientName.toLowerCase().includes(q) ||
         t.projectName.toLowerCase().includes(q) ||
-        t.prompt.toLowerCase().includes(q),
+        t.prompt.toLowerCase().includes(q) ||
+        (t.matchingProfile?.mustHave ?? []).some((term) => term.toLowerCase().includes(q)) ||
+        (t.matchingProfile?.exclude ?? []).some((term) => term.toLowerCase().includes(q)),
     );
   }, [allData, debouncedSearch]);
 
@@ -88,6 +101,24 @@ export function TopicsPage() {
                   </button>
                 </>
               )}
+              {row.matchingProfile?.mustHave?.length ? (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {row.matchingProfile.mustHave.slice(0, 3).map((term) => (
+                    <Badge key={term} variant="secondary" className="text-[10px] py-0">
+                      + {term}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+              {row.matchingProfile?.expectedKinds?.length ? (
+                <div className="flex flex-wrap gap-1">
+                  {row.matchingProfile.expectedKinds.map((kind) => (
+                    <Badge key={kind} variant="outline" className="text-[10px] py-0">
+                      {ANNOUNCEMENT_KIND_LABELS[kind]}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         },

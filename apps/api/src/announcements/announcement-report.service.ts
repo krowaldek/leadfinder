@@ -208,7 +208,7 @@ export class AnnouncementReportService {
 
     // ── 3. Wywołaj GPT ───────────────────────────────────────────────────────
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    const chatModel = this.config.get("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+    const chatModel = this.config.get("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
 
     const userMessage = [
       `OGŁOSZENIE: ${announcement.title}`,
