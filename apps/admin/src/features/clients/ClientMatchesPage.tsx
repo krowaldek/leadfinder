@@ -1,86 +1,94 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
-import { format } from "date-fns";
-import { pl } from "date-fns/locale";
+import { type ComponentType, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type Announcement, type ClientMatchResponse } from "@leadfinder/contracts";
+import { BarChart3, Sparkles, Target, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Search, Info, FileText } from "lucide-react";
-import { DataTable, type ColumnDef } from "../../../components/data-table";
-import { type ClientMatchResponse } from "@leadfinder/contracts";
-import { fetchClients, fetchClientMatches, fetchProjects, fetchTopics, rematchClient, updateMatchStatus } from "./clients-api";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { MatchDetailSheet } from "@/components/MatchDetailSheet";
+
 import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
-import type { Announcement } from "@leadfinder/contracts";
+import { MatchDetailSheet } from "@/components/MatchDetailSheet";
+import { FeaturedMatchCard } from "@/components/matches/FeaturedMatchCard";
+import { MATCH_STATUS_LABELS } from "@/components/matches/match-meta";
+import { MatchesFiltersCard } from "@/components/matches/MatchesFiltersCard";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
-function buildAnnouncementPanelHref(announcement: Pick<ClientMatchResponse["announcement"], "externalId" | "sourceSystem">) {
-  const params = new URLSearchParams({
-    search: announcement.externalId,
-    source: announcement.sourceSystem,
-  });
+import {
+  fetchClientMatches,
+  fetchClients,
+  fetchProjects,
+  fetchTopics,
+  rematchClient,
+  updateMatchStatus,
+} from "./clients-api";
 
-  return `/announcements?${params.toString()}`;
-}
+type SortOption = "deadlineAt:asc" | "similarity:desc" | "publishedAt:desc" | "title:asc";
 
-// ── Labels ───────────────────────────────────────────────────────────────────
-
-const MATCH_STATUS_LABELS: Record<string, string> = {
-  NEW: "Nowe",
-  VIEWED: "Wyświetlone",
-  DISMISSED: "Odrzucone",
-  SHORTLISTED: "Wybrane",
-};
-
-const KIND_LABELS: Record<string, string> = {
-  DOSTAWA: "Dostawa",
-  USLUGA: "Usługa",
-  ROBOTY_BUDOWLANE: "Roboty bud.",
-  SZKOLENIE: "Szkolenie",
-  USLUGA_IT: "Usługi IT",
-  USLUGA_BADAWCZO_ROZWOJOWA: "B+R",
-  DORADZTWO: "Doradztwo",
-  INNE: "Inne",
-};
-
-// ── Sorting ──────────────────────────────────────────────────────────────────
-
-type SortCol = "title" | "similarity" | "deadlineAt" | "publishedAt";
-type SortDir = "asc" | "desc";
-
-function SortIcon({ col, sortCol, sortDir }: { col: SortCol; sortCol: SortCol; sortDir: SortDir }) {
-  if (sortCol !== col) return <ArrowUpDown className="ml-1 inline size-3.5 opacity-40" />;
-  return sortDir === "asc" ? <ArrowUp className="ml-1 inline size-3.5" /> : <ArrowDown className="ml-1 inline size-3.5" />;
-}
-
-function SortHeader({
-  col, label, sortCol, sortDir, onToggle,
+function StatsCard({
+  title,
+  value,
+  caption,
+  icon: Icon,
+  tone,
 }: {
-  col: SortCol; label: string; sortCol: SortCol; sortDir: SortDir; onToggle: (col: SortCol) => void;
+  title: string;
+  value: number;
+  caption: string;
+  icon: ComponentType<{ className?: string }>;
+  tone: string;
 }) {
   return (
-    <button type="button" onClick={() => onToggle(col)} className="flex items-center text-xs font-medium hover:text-foreground">
-      {label}
-      <SortIcon col={col} sortCol={sortCol} sortDir={sortDir} />
-    </button>
+    <Card className="overflow-hidden rounded-[28px] border border-primary/10 bg-card/90 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.55)]">
+      <CardContent className="flex items-center justify-between gap-4 p-5">
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">{title}</p>
+          <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{value}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{caption}</p>
+        </div>
+        <div className={cn("flex size-12 items-center justify-center rounded-2xl text-white shadow-lg", tone)}>
+          <Icon className="size-5" />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <Card className="rounded-[32px] border border-dashed border-primary/20 bg-card/80 shadow-sm">
+      <CardContent className="flex min-h-[320px] flex-col items-center justify-center gap-3 p-8 text-center">
+        <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <Sparkles className="size-6" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">{title}</h3>
+          <p className="max-w-xl text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function toReportAnnouncement(match: ClientMatchResponse): Announcement {
+  return {
+    id: match.announcement.id,
+    title: match.announcement.title,
+    detailedReport: match.announcement.detailedReport ?? null,
+  } as Announcement;
+}
 
 export function ClientMatchesPage() {
-  const [selectedClientId, setSelectedClientId] = useState<string>("");
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [selectedTopicId, setSelectedTopicId] = useState<string>("");
-  const [sortCol, setSortCol] = useState<SortCol>("deadlineAt");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedTopicId, setSelectedTopicId] = useState("");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("deadlineAt:asc");
   const [hideDismissed, setHideDismissed] = useState(true);
   const [hideExpired, setHideExpired] = useState(true);
-  const [search, setSearch] = useState("");
+  
   const [detailMatch, setDetailMatch] = useState<ClientMatchResponse | null>(null);
   const [reportTarget, setReportTarget] = useState<Announcement | null>(null);
+
   const queryClient = useQueryClient();
 
   const clientsQuery = useQuery({
@@ -91,19 +99,19 @@ export function ClientMatchesPage() {
   const projectsQuery = useQuery({
     queryKey: ["projects", selectedClientId],
     queryFn: () => fetchProjects(selectedClientId),
-    enabled: !!selectedClientId,
+    enabled: Boolean(selectedClientId),
   });
 
   const topicsQuery = useQuery({
     queryKey: ["topics", selectedClientId, selectedProjectId],
     queryFn: () => fetchTopics(selectedClientId, selectedProjectId),
-    enabled: !!selectedClientId && !!selectedProjectId,
+    enabled: Boolean(selectedClientId && selectedProjectId),
   });
 
   const matchesQuery = useQuery({
     queryKey: ["client-matches", selectedClientId],
     queryFn: () => fetchClientMatches(selectedClientId),
-    enabled: !!selectedClientId,
+    enabled: Boolean(selectedClientId),
   });
 
   const statusMutation = useMutation({
@@ -112,7 +120,7 @@ export function ClientMatchesPage() {
       status,
     }: {
       matchId: string;
-      status: "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED";
+      status: ClientMatchResponse["status"];
     }) => updateMatchStatus(selectedClientId, matchId, status),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["client-matches", selectedClientId] });
@@ -129,414 +137,220 @@ export function ClientMatchesPage() {
     onError: () => toast.error("Nie udało się zakolejkować przeliczenia dopasowań"),
   });
 
-  function toggleSort(col: SortCol) {
-    if (sortCol === col) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortCol(col);
-      setSortDir(col === "similarity" ? "desc" : "asc");
-    }
-  }
-
-  const allMatches = matchesQuery.data?.data ?? [];
+  const clients = clientsQuery.data?.data ?? [];
   const projects = projectsQuery.data?.data ?? [];
   const topics = topicsQuery.data?.data ?? [];
-  const clients = clientsQuery.data?.data ?? [];
+  const allMatches = matchesQuery.data?.data ?? [];
 
-  // filtered by project/topic before sorting
   const filteredByScope = useMemo(() => {
     let rows = allMatches;
-    if (selectedProjectId) rows = rows.filter((m) => m.topic.projectId === selectedProjectId);
-    if (selectedTopicId) rows = rows.filter((m) => m.topic.id === selectedTopicId);
+
+    if (selectedProjectId) {
+      rows = rows.filter((match) => match.topic.projectId === selectedProjectId);
+    }
+
+    if (selectedTopicId) {
+      rows = rows.filter((match) => match.topic.id === selectedTopicId);
+    }
+
     return rows;
   }, [allMatches, selectedProjectId, selectedTopicId]);
 
   const total = filteredByScope.length;
-  const shortlisted = filteredByScope.filter((m) => m.status === "SHORTLISTED").length;
-  const dismissed = filteredByScope.filter((m) => m.status === "DISMISSED").length;
+  const shortlisted = filteredByScope.filter((match) => match.status === "SHORTLISTED").length;
+  const dismissed = filteredByScope.filter((match) => match.status === "DISMISSED").length;
 
   const displayedMatches = useMemo(() => {
-    let rows = hideDismissed ? filteredByScope.filter((m) => m.status !== "DISMISSED") : filteredByScope;
+    let rows = hideDismissed ? filteredByScope.filter((match) => match.status !== "DISMISSED") : filteredByScope;
 
     if (hideExpired) {
       const now = new Date();
-      rows = rows.filter((m) => {
-        const d = m.announcement.deadlineAt;
-        if (!d) return true;
-        return new Date(d) > now;
+      rows = rows.filter((match) => {
+        const deadline = match.announcement.deadlineAt;
+        if (!deadline) return true;
+        return new Date(deadline) > now;
       });
     }
 
     if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      rows = rows.filter(
-        (m) =>
-          m.announcement.title.toLowerCase().includes(q) ||
-          (m.announcement.description ?? "").toLowerCase().includes(q),
-      );
+      const query = search.trim().toLowerCase();
+      rows = rows.filter((match) => {
+        const title = match.announcement.title.toLowerCase();
+        const description = (match.announcement.description ?? "").toLowerCase();
+        const context = (match.announcement.searchContext ?? "").toLowerCase();
+        return title.includes(query) || description.includes(query) || context.includes(query);
+      });
     }
 
-    return [...rows].sort((a, b) => {
-      let cmp = 0;
+    const [column, direction] = sortBy.split(":") as ["deadlineAt" | "similarity" | "publishedAt" | "title", "asc" | "desc"];
 
-      if (sortCol === "deadlineAt") {
-        const da = a.announcement.deadlineAt ?? "";
-        const db = b.announcement.deadlineAt ?? "";
-        if (!da && !db) cmp = 0;
-        else if (!da) return 1;
-        else if (!db) return -1;
-        else cmp = da.localeCompare(db);
-      } else if (sortCol === "similarity") {
-        cmp = a.similarity - b.similarity;
-      } else if (sortCol === "title") {
-        cmp = a.announcement.title.localeCompare(b.announcement.title, "pl");
-      } else if (sortCol === "publishedAt") {
-        const da = a.announcement.publishedAt ?? "";
-        const db = b.announcement.publishedAt ?? "";
-        cmp = da.localeCompare(db);
+    return [...rows].sort((left, right) => {
+      let comparison = 0;
+
+      if (column === "deadlineAt") {
+        const leftDeadline = left.announcement.deadlineAt ?? "";
+        const rightDeadline = right.announcement.deadlineAt ?? "";
+        if (!leftDeadline && !rightDeadline) comparison = 0;
+        else if (!leftDeadline) comparison = 1;
+        else if (!rightDeadline) comparison = -1;
+        else comparison = leftDeadline.localeCompare(rightDeadline);
+      } else if (column === "similarity") {
+        comparison = left.similarity - right.similarity;
+      } else if (column === "publishedAt") {
+        comparison = (left.announcement.publishedAt ?? "").localeCompare(right.announcement.publishedAt ?? "");
+      } else {
+        comparison = left.announcement.title.localeCompare(right.announcement.title, "pl");
       }
 
-      if (cmp === 0 && sortCol !== "similarity") {
-        cmp = b.similarity - a.similarity;
+      if (comparison === 0 && column !== "similarity") {
+        comparison = right.similarity - left.similarity;
       }
 
-      return sortDir === "asc" ? cmp : -cmp;
+      return direction === "asc" ? comparison : -comparison;
     });
-  }, [filteredByScope, hideDismissed, hideExpired, search, sortCol, sortDir]);
+  }, [filteredByScope, hideDismissed, hideExpired, search, sortBy]);
 
-  // ── Columns ─────────────────────────────────────────────────────────────────
-
-  const columns: ColumnDef<ClientMatchResponse>[] = [
-    {
-      id: "title",
-      header: (
-        <SortHeader col="title" label="Ogłoszenie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
-      ),
-      cell: ({ row }) => (
-        <div className="max-w-sm">
-          <p className="line-clamp-2 text-sm font-medium leading-snug">{row.announcement.title}</p>
-          {row.announcement.description ? (
-            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{row.announcement.description}</p>
-          ) : null}
-          <p className="mt-0.5 text-xs text-primary/60">
-            {row.topic.projectName} › {row.topic.title}
-          </p>
-        </div>
-      ),
-    },
-    {
-      id: "kind",
-      header: "Rodzaj",
-      cell: ({ row }) => {
-        const kind = row.announcement.kind;
-        return kind ? (
-          <Badge variant="outline" className="whitespace-nowrap text-xs">
-            {KIND_LABELS[kind] ?? kind}
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        );
-      },
-    },
-    {
-      id: "llmValue",
-      header: "Wartość (LLM)",
-      cell: ({ row }) => {
-        const val = row.announcement.llmEstimatedValue;
-        if (!val) return <span className="text-xs text-muted-foreground">—</span>;
-        return (
-          <span className="text-sm font-medium tabular-nums whitespace-nowrap">
-            {Number(val).toLocaleString("pl-PL", { style: "currency", currency: "PLN", maximumFractionDigits: 0 })}
-          </span>
-        );
-      },
-    },
-    {
-      id: "deadlineAt",
-      header: (
-        <SortHeader col="deadlineAt" label="Termin składania" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
-      ),
-      cell: ({ row }) => {
-        const d = row.announcement.deadlineAt;
-        if (!d) return <span className="text-xs text-muted-foreground">—</span>;
-        const date = new Date(d);
-        const now = new Date();
-        const diffMs = date.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-        const urgent = diffDays >= 0 && diffDays <= 3;
-        const past = diffDays < 0;
-        return (
-          <div className="whitespace-nowrap">
-            <p className={cn("text-sm font-medium", urgent && "text-yellow-600 dark:text-yellow-400", past && "text-muted-foreground line-through")}>
-              {format(date, "dd.MM.yyyy", { locale: pl })}
-            </p>
-            <p className={cn("text-xs", urgent && "text-yellow-600 dark:text-yellow-400", past ? "text-muted-foreground" : "text-muted-foreground")}>
-              {format(date, "HH:mm")}
-              {past ? " · po terminie" : urgent ? ` · za ${diffDays} ${diffDays === 1 ? "dzień" : "dni"}` : ` · za ${diffDays} dni`}
-            </p>
-          </div>
-        );
-      },
-    },
-    {
-      id: "similarity",
-      header: (
-        <SortHeader col="similarity" label="Dopasowanie" sortCol={sortCol} sortDir={sortDir} onToggle={toggleSort} />
-      ),
-      cell: ({ row }) => {
-        const pct = Math.round(row.similarity * 100);
-        return (
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn("h-full rounded-full", pct >= 70 ? "bg-green-500" : pct >= 50 ? "bg-yellow-500" : "bg-muted-foreground/40")}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <span className="font-mono text-sm font-medium">{pct}%</span>
-          </div>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-3">
-          <select
-            value={row.status}
-            onChange={(e) =>
-              statusMutation.mutate({
-                matchId: row.id,
-                status: e.target.value as "NEW" | "VIEWED" | "DISMISSED" | "SHORTLISTED",
-              })
-            }
-            className="flex h-7 rounded-lg border border-input bg-transparent px-2 py-0.5 text-xs outline-none focus-visible:border-ring"
-          >
-            {Object.entries(MATCH_STATUS_LABELS).map(([v, l]) => (
-              <option key={v} value={v}>{l}</option>
-            ))}
-          </select>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0"
-            title="Szczegóły dopasowania"
-            onClick={() => setDetailMatch(row)}
-          >
-            <Info className="size-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0"
-            title="Raport analityczny"
-            onClick={() => {
-              setReportTarget({
-                id: row.announcement.id,
-                title: row.announcement.title,
-                detailedReport: row.announcement.detailedReport ?? null,
-              } as unknown as Announcement);
-            }}
-          >
-            <FileText className="size-3.5" />
-          </Button>
-          <a
-            href={buildAnnouncementPanelHref(row.announcement)}
-            className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2 hover:text-primary/80"
-            title="Otwórz w liście ogłoszeń"
-          >
-            Ogłoszenie
-          </a>
-          <a
-            href={row.announcement.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            Otwórz <ExternalLink className="size-3" />
-          </a>
-        </div>
-      ),
-    },
-  ];
-
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const clientOptions = clients.map((client) => ({ id: client.id, label: client.companyName }));
+  const projectOptions = projects.map((project) => ({ id: project.id, label: project.name }));
+  const topicOptions = topics.map((topic) => ({ id: topic.id, label: topic.title }));
+  const selectedClient = clients.find((client) => client.id === selectedClientId) ?? null;
 
   return (
-    <div className="grid gap-6">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="client-select" className="text-xs font-medium text-muted-foreground">
-            Klient
-          </label>
-          <select
-            id="client-select"
-            value={selectedClientId}
-            onChange={(e) => {
-              setSelectedClientId(e.target.value);
-              setSelectedProjectId("");
-              setSelectedTopicId("");
-              setSearch("");
-            }}
-            className="flex h-8 min-w-[260px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            <option value="">— wybierz klienta —</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.companyName}</option>
-            ))}
-          </select>
+    <div className="grid gap-6 pb-6">
+      <MatchesFiltersCard
+        clients={clientOptions}
+        projects={projectOptions}
+        topics={topicOptions}
+        selectedClientId={selectedClientId}
+        selectedProjectId={selectedProjectId}
+        selectedTopicId={selectedTopicId}
+        search={search}
+        sortBy={sortBy}
+        hideDismissed={hideDismissed}
+        hideExpired={hideExpired}
+        rematchPending={rematchMutation.isPending}
+        onClientChange={(value) => {
+          setSelectedClientId(value);
+          setSelectedProjectId("");
+          setSelectedTopicId("");
+          setSearch("");
+        }}
+        onProjectChange={(value) => {
+          setSelectedProjectId(value);
+          setSelectedTopicId("");
+        }}
+        onTopicChange={(value) => {
+          setSelectedTopicId(value);
+        }}
+        onSearchChange={setSearch}
+        onSortChange={(value) => setSortBy(value as SortOption)}
+        onHideDismissedChange={setHideDismissed}
+        onHideExpiredChange={setHideExpired}
+        onRematch={() => rematchMutation.mutate(selectedClientId)}
+      />
+
+      {selectedClientId ? (
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatsCard
+            title="Wszystkie dopasowania"
+            value={total}
+            caption="Łącznie po wybranych filtrach klienta"
+            icon={BarChart3}
+            tone="bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900"
+          />
+          <StatsCard
+            title="Shortlista"
+            value={shortlisted}
+            caption={`Status ${MATCH_STATUS_LABELS.SHORTLISTED}`}
+            icon={Target}
+            tone="bg-gradient-to-br from-cyan-500 via-blue-500 to-indigo-600"
+          />
+          <StatsCard
+            title="Odrzucone"
+            value={dismissed}
+            caption={`Status ${MATCH_STATUS_LABELS.DISMISSED}`}
+            icon={XCircle}
+            tone="bg-gradient-to-br from-rose-500 via-orange-500 to-amber-500"
+          />
         </div>
+      ) : null}
 
-        {selectedClientId && (
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="project-select" className="text-xs font-medium text-muted-foreground">
-              Projekt
-            </label>
-            <select
-              id="project-select"
-              value={selectedProjectId}
-              onChange={(e) => {
-                setSelectedProjectId(e.target.value);
-                setSelectedTopicId("");
-              }}
-              className="flex h-8 min-w-[220px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <option value="">— wszystkie projekty —</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+      {!selectedClientId ? (
+        <EmptyState
+          title="Wybierz klienta, aby zobaczyć dopasowania"
+          description="Wybierz klienta z listy powyżej, aby przejrzeć znalezione dla niego oferty przetargowe."
+        />
+      ) : matchesQuery.isLoading ? (
+        <div className="grid gap-6">
+          <Card className="h-[400px] animate-pulse rounded-[28px] border border-primary/10 bg-card/70" />
+          <Card className="h-[400px] animate-pulse rounded-[28px] border border-primary/10 bg-card/70" />
+        </div>
+      ) : displayedMatches.length === 0 ? (
+        <EmptyState
+          title={search ? "Brak wyników dla wyszukiwania" : "Brak dopasowań do pokazania"}
+          description={
+            search
+              ? `Nie znaleziono ogłoszeń pasujących do frazy „${search}”. Zmień filtry lub wyczyść wyszukiwanie.`
+              : hideDismissed
+                ? "Po aktywnych filtrach nic nie zostało. Spróbuj pokazać odrzucone lub oferty po terminie."
+                : "Ten klient nie ma jeszcze dopasowań w aktualnym zakresie projektu i tematu."
+          }
+        />
+      ) : (
+        <div className="grid gap-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+            <div>
+              <p className="text-sm font-medium text-primary">{selectedClient?.companyName ?? "Klient"}</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Znalezione oferty</h1>
+            </div>
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
+              {displayedMatches.length} aktywnych ofert
+            </Badge>
           </div>
-        )}
 
-        {selectedClientId && selectedProjectId && (
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="topic-select" className="text-xs font-medium text-muted-foreground">
-              Temat
-            </label>
-            <select
-              id="topic-select"
-              value={selectedTopicId}
-              onChange={(e) => setSelectedTopicId(e.target.value)}
-              className="flex h-8 min-w-[200px] rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <option value="">— wszystkie tematy —</option>
-              {topics.map((t) => (
-                <option key={t.id} value={t.id}>{t.title}</option>
-              ))}
-            </select>
+          <div className="grid gap-8">
+            {displayedMatches.map((match) => (
+              <FeaturedMatchCard
+                key={match.id}
+                match={match}
+                statusPending={statusMutation.isPending && statusMutation.variables?.matchId === match.id}
+                onStatusChange={(status) => {
+                  statusMutation.mutate({
+                    matchId: match.id,
+                    status,
+                  });
+                }}
+                onOpenDetails={() => setDetailMatch(match)}
+                onOpenReport={() => setReportTarget(toReportAnnouncement(match))}
+              />
+            ))}
           </div>
-        )}
-
-        {selectedClientId && (
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Szukaj w ogłoszeniach..."
-              className="h-8 w-56 pl-8 text-sm"
-            />
-          </div>
-        )}
-
-        {selectedClientId && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={rematchMutation.isPending}
-            onClick={() => rematchMutation.mutate(selectedClientId)}
-          >
-            {rematchMutation.isPending ? "Kolejkowanie…" : "Przelicz dopasowania"}
-          </Button>
-        )}
-
-        <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-          <input type="checkbox" checked={hideDismissed} onChange={(e) => setHideDismissed(e.target.checked)} className="size-4 accent-primary" />
-          Ukryj odrzucone
-        </label>
-
-        <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-          <input type="checkbox" checked={hideExpired} onChange={(e) => setHideExpired(e.target.checked)} className="size-4 accent-primary" />
-          Ukryj po terminie
-        </label>
-      </div>
-
-      {/* Stats */}
-      {selectedClientId && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Wszystkich dopasowań</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold">{total}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">łącznie w bazie</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Shortlist</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold">{shortlisted}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">status Wybrane</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Odrzuconych</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold">{dismissed}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">status Odrzucone</p>
-            </CardContent>
-          </Card>
         </div>
       )}
 
-      {/* Table */}
-      <DataTable
-        columns={columns}
-        data={displayedMatches}
-        isLoading={matchesQuery.isLoading}
-        emptyState={
-          !selectedClientId
-            ? { title: "Wybierz klienta", description: "Wybierz klienta z listy powyżej, aby zobaczyć dopasowania." }
-            : search
-              ? { title: "Brak wyników", description: `Brak ogłoszeń pasujących do "${search}".` }
-              : {
-                  title: "Brak dopasowań",
-                  description: hideDismissed
-                    ? "Brak wynikow - odznacz filtr 'Ukryj odrzucone', aby zobaczyc wszystkie."
-                    : "Ten klient nie ma jeszcze żadnych dopasowań. Dodaj projekt i temat, aby zacząć.",
-                }
-        }
-      />
-
       <MatchDetailSheet
         match={detailMatch}
-        open={!!detailMatch}
-        onOpenChange={(open) => { if (!open) setDetailMatch(null); }}
+        open={Boolean(detailMatch)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailMatch(null);
+          }
+        }}
       />
 
       <AnnouncementReportDialog
         announcement={reportTarget}
-        open={!!reportTarget}
+        open={Boolean(reportTarget)}
         onClose={() => setReportTarget(null)}
         allowGeneration={false}
-        emptyStateMessage={(
+        emptyStateMessage={
           <>
             Brak raportu dla tego ogłoszenia.
             <br />
-            Samo dopasowanie mogło jednak zostać wyliczone na podstawie embeddingu i `searchContext`, nawet jeśli
-            raport nie został jeszcze zapisany.
+            Samo dopasowanie mogło jednak zostać wyliczone na podstawie embeddingu i `searchContext`, nawet jeśli raport nie został jeszcze zapisany.
           </>
-        )}
+        }
       />
     </div>
   );
 }
-
