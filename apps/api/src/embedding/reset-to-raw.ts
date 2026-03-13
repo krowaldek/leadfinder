@@ -1,7 +1,7 @@
-import "reflect-metadata";
-import { NestFactory } from "@nestjs/core";
 import { getQueueToken } from "@nestjs/bullmq";
+import { NestFactory } from "@nestjs/core";
 import type { Queue } from "bullmq";
+import "reflect-metadata";
 import { AppModule } from "../app.module.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { EMBEDDING_QUEUE } from "./embedding-queue.constants.js";
@@ -28,11 +28,7 @@ async function main() {
   const prisma = app.get(PrismaService);
   const queue = app.get<Queue>(getQueueToken(EMBEDDING_QUEUE));
 
-  const [itemStats, announcementStats, clientMatchCount, queueCounts] = await Promise.all([
-    prisma.announcementItem.aggregate({
-      _count: { _all: true },
-      where: {},
-    }),
+  const [announcementStats, clientMatchCount, queueCounts] = await Promise.all([
     prisma.announcement.aggregate({
       _count: { _all: true },
       where: {},
@@ -41,24 +37,16 @@ async function main() {
     queue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
   ]);
 
-  const [itemsWithDerivedState, announcementsWithReports] = await Promise.all([
-    prisma.announcementItem.count({
-      where: {
-        OR: [
-          { kind: { not: null } },
-          { shortSummary: { not: null } },
-          { detailedReport: { not: null } },
-          { llmEstimatedValue: { not: null } },
-          { status: { not: "PENDING" } },
-        ],
-      },
-    }),
-    prisma.announcement.count({
-      where: {
-        detailedReport: { not: null },
-      },
-    }),
-  ]);
+  const announcementsWithDerivedState = await prisma.announcement.count({
+    where: {
+      OR: [
+        { kind: { not: null } },
+        { detailedReport: { not: null } },
+        { llmEstimatedValue: { not: null } },
+        { embeddingStatus: { not: "PENDING" } },
+      ],
+    },
+  });
 
   console.log(
     JSON.stringify(
@@ -67,13 +55,10 @@ async function main() {
         force: options.force,
         totals: {
           announcements: announcementStats._count._all,
-          items: itemStats._count._all,
           clientMatches: clientMatchCount,
         },
         willReset: {
-          itemsWithDerivedState,
-          announcementsWithReports,
-          itemEmbeddingsAssumed: itemStats._count._all,
+          announcementsWithDerivedState,
           announcementEmbeddingsAssumed: announcementStats._count._all,
           clientMatches: clientMatchCount,
         },
@@ -124,7 +109,7 @@ async function main() {
   await queue.resume();
 
   console.log(
-    "Reset complete. Raw announcements and items were preserved; derived embedding/report state was cleared.",
+    "Reset complete. Raw announcements were preserved; derived embedding/report state was cleared.",
   );
 
   await app.close();

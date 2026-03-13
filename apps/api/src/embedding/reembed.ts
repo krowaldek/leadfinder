@@ -1,5 +1,5 @@
 /**
- * Safe item re-embedding backfill.
+ * Safe announcement re-embedding backfill.
  *
  * Examples:
  *   pnpm items:reembed -- --mode full
@@ -8,10 +8,10 @@
  *   pnpm items:reembed -- --mode targeted --announcement-id <uuid> --execute
  */
 
-import "reflect-metadata";
-import { NestFactory } from "@nestjs/core";
 import { getQueueToken } from "@nestjs/bullmq";
+import { NestFactory } from "@nestjs/core";
 import type { Queue } from "bullmq";
+import "reflect-metadata";
 import { AppModule } from "../app.module.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
@@ -26,7 +26,7 @@ const VALID_ITEM_STATUSES = ["PENDING", "EMBEDDED", "ERROR"] as const;
 
 type SourceSystem = (typeof VALID_SOURCES)[number];
 type Mode = "full" | "targeted";
-type ItemStatus = (typeof VALID_ITEM_STATUSES)[number];
+type AnnouncementStatus = (typeof VALID_ITEM_STATUSES)[number];
 
 interface CliOptions {
   mode: Mode;
@@ -34,7 +34,7 @@ interface CliOptions {
   limit: number | null;
   onlyEmbedded: boolean;
   readyForEmbedOnly: boolean;
-  statuses: ItemStatus[];
+  statuses: AnnouncementStatus[];
   sourceSystems: SourceSystem[];
   announcementIds: string[];
   itemIds: string[];
@@ -80,7 +80,10 @@ function parseArgs(argv: string[]): CliOptions {
   ).filter((value): value is SourceSystem => VALID_SOURCES.includes(value as SourceSystem));
   const statuses = parseListArg(
     typeof args.get("status") === "string" ? String(args.get("status")) : undefined,
-  ).filter((value): value is ItemStatus => VALID_ITEM_STATUSES.includes(value as ItemStatus));
+  ).filter(
+    (value): value is AnnouncementStatus =>
+      VALID_ITEM_STATUSES.includes(value as AnnouncementStatus),
+  );
   const announcementIds = parseListArg(
     typeof args.get("announcement-id") === "string"
       ? String(args.get("announcement-id"))
@@ -133,48 +136,39 @@ async function main() {
   const where = {
     ...(options.itemIds.length > 0 ? { id: { in: options.itemIds } } : {}),
     ...(options.announcementIds.length > 0
-      ? { announcementId: { in: options.announcementIds } }
+      ? { id: { in: options.announcementIds } }
       : {}),
     ...(options.onlyEmbedded
-      ? { status: "EMBEDDED" as const }
+      ? { embeddingStatus: "EMBEDDED" as const }
       : options.statuses.length > 0
-        ? { status: { in: options.statuses } }
+        ? { embeddingStatus: { in: options.statuses } }
         : {}),
     ...(options.sourceSystems.length > 0
       ? {
-          announcement: {
-            sourceSystem: { in: options.sourceSystems },
-          },
+          sourceSystem: { in: options.sourceSystems },
         }
       : {}),
   };
 
-  const items = await prisma.announcementItem.findMany({
+  const items = await prisma.announcement.findMany({
     where,
     select: {
       id: true,
-      announcementId: true,
       title: true,
-      status: true,
+      embeddingStatus: true,
       kind: true,
-      shortSummary: true,
       detailedReport: true,
-      announcement: {
-        select: {
-          sourceSystem: true,
-          title: true,
-        },
-      },
+      sourceSystem: true,
     },
-    orderBy: [{ updatedAt: "asc" }, { itemIndex: "asc" }],
+    orderBy: [{ updatedAt: "asc" }, { partIndex: "asc" }],
     ...(options.limit != null ? { take: options.limit } : {}),
   });
 
   const readyForEmbed = items.filter(
-    (item) => item.kind && item.shortSummary && item.detailedReport,
+    (item) => item.kind && item.detailedReport,
   );
   const needsReport = items.filter(
-    (item) => !item.kind || !item.shortSummary || !item.detailedReport,
+    (item) => !item.kind || !item.detailedReport,
   );
   const selectedItems = options.readyForEmbedOnly ? readyForEmbed : items;
 
@@ -195,19 +189,15 @@ async function main() {
         selectedItems: selectedItems.length,
         queueReportJobs: options.readyForEmbedOnly ? 0 : needsReport.length,
         queueEmbedJobs: selectedItems.filter(
-          (item) => item.kind && item.shortSummary && item.detailedReport,
+          (item) => item.kind && item.detailedReport,
         ).length,
         skippedMissingReportItems: options.readyForEmbedOnly ? needsReport.length : 0,
         sample: selectedItems.slice(0, 5).map((item) => ({
-          itemId: item.id,
-          itemStatus: item.status,
-          sourceSystem: item.announcement.sourceSystem,
-          announcementTitle: item.announcement.title.slice(0, 80),
-          itemTitle: item.title.slice(0, 80),
-          nextJob:
-            item.kind && item.shortSummary && item.detailedReport
-              ? EmbeddingJob.EMBED_ITEM
-              : EmbeddingJob.REPORT_ITEM,
+          announcementId: item.id,
+          announcementStatus: item.embeddingStatus,
+          sourceSystem: item.sourceSystem,
+          announcementTitle: item.title.slice(0, 80),
+          nextJob: EmbeddingJob.EMBED_ANNOUNCEMENT,
         })),
       },
       null,
@@ -225,14 +215,11 @@ async function main() {
   let queued = 0;
 
   for (const item of selectedItems) {
-    const jobName =
-      item.kind && item.shortSummary && item.detailedReport
-        ? EmbeddingJob.EMBED_ITEM
-        : EmbeddingJob.REPORT_ITEM;
+    const jobName = EmbeddingJob.EMBED_ANNOUNCEMENT;
 
     await queue.add(
       jobName,
-      { itemId: item.id },
+      { announcementId: item.id },
       {
         jobId: `${jobName.replace(/\./g, "-")}-manual-${item.id}-${runId}`,
         attempts: 3,
