@@ -27,11 +27,13 @@ export const SOURCE_LABELS: Record<string, string> = {
 };
 
 export function buildAnnouncementPanelHref(
-  announcement: Pick<ClientMatchResponse["announcement"], "externalId" | "sourceSystem">,
+  announcement: Pick<ClientMatchResponse["announcement"], "id" | "externalId" | "sourceSystem" | "partIndex">,
 ) {
   const params = new URLSearchParams({
+    id: announcement.id,
     search: announcement.externalId,
     source: announcement.sourceSystem,
+    partIndex: String(announcement.partIndex),
   });
 
   return `/announcements?${params.toString()}`;
@@ -57,7 +59,7 @@ export function getSimilarityMeta(similarity: number) {
   if (percentage >= 85) {
     return {
       percentage,
-      label: "Świetne dopasowanie",
+      label: "Świetne",
       tone: "from-blue-600 via-indigo-500 to-sky-400",
       textTone: "text-blue-600 dark:text-blue-300",
       railTone: "bg-blue-500",

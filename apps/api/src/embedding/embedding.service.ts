@@ -69,6 +69,15 @@ function extractTokenUsage(meta: unknown): TokenUsage | null {
   return { promptTokens: p, completionTokens: c, totalTokens: t };
 }
 
+function createChatModel(apiKey: string, model: string, maxTokens: number) {
+  return new ChatOpenAI({
+    apiKey,
+    model,
+    maxTokens,
+    ...(model.startsWith("gpt-5") ? { reasoningEffort: "low" } : { temperature: 0 }),
+  });
+}
+
 const CLASSIFICATION_PROMPT = `Jesteś klasyfikatorem polskich ogłoszeń przetargowych i zapytań ofertowych. Przypisz ogłoszenie do JEDNEJ kategorii.
 
 Kategorie:
@@ -439,7 +448,7 @@ export class EmbeddingService {
   }
 
   private async classifyKind(searchContext: string, apiKey: string, model: string): Promise<AnnouncementKind> {
-    const chat = new ChatOpenAI({ apiKey, model, temperature: 0, maxTokens: 20 });
+    const chat = createChatModel(apiKey, model, 20);
     const response = await chat.invoke([
       new SystemMessage(CLASSIFICATION_PROMPT),
       new HumanMessage(searchContext),
@@ -458,7 +467,7 @@ export class EmbeddingService {
     model: string,
   ): Promise<{ kind: AnnouncementKind; detailedReport: string; estimatedValue: number | null; tokenUsage: TokenUsage | null }> {
     try {
-      const chat = new ChatOpenAI({ apiKey, model, temperature: 0, maxTokens: 2_500 });
+      const chat = createChatModel(apiKey, model, 4_000);
 
       const attachmentsContext =
         attachmentTexts.length > 0

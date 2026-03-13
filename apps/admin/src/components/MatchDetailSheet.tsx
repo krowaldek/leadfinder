@@ -7,10 +7,12 @@ import { pl } from "date-fns/locale";
 import { ExternalLink } from "lucide-react";
 import type { ClientMatchResponse } from "@leadfinder/contracts";
 
-function buildAnnouncementPanelHref(announcement: Pick<ClientMatchResponse["announcement"], "externalId" | "sourceSystem">) {
+function buildAnnouncementPanelHref(announcement: Pick<ClientMatchResponse["announcement"], "id" | "externalId" | "sourceSystem" | "partIndex">) {
   const params = new URLSearchParams({
+    id: announcement.id,
     search: announcement.externalId,
     source: announcement.sourceSystem,
+    partIndex: String(announcement.partIndex),
   });
 
   return `/announcements?${params.toString()}`;

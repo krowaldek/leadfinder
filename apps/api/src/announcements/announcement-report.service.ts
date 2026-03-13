@@ -103,6 +103,51 @@ Oszacuj wartość zamówienia netto (PLN) z pełnym uzasadnieniem:
 
 Pisz wyczerpująco i technicznie. Nie pomijaj żadnych danych liczbowych ani nazw. Pomijaj jedynie puste formalności urzędowe.`;
 
+const COMPACT_REPORT_SYSTEM_PROMPT = `Przygotuj po polsku raport Markdown dla wykonawcy. Zachowaj sekcje:
+## Przedmiot zamówienia
+## Lokalizacja realizacji
+## Szczegółowy zakres prac
+## Wymagane produkty, materiały i technologie
+## Szacunek kosztów
+## Wymagania wobec wykonawcy
+## Kryteria oceny i warunki handlowe
+## Terminy
+## Ryzyka i zalecenia dla wykonawcy
+
+Pisz konkretnie i technicznie. Jeśli danych brakuje, zaznacz to wprost. Nie dodawaj wstępu ani zakończenia.`;
+
+function createChatModel(apiKey: string, model: string, maxTokens: number) {
+  return new ChatOpenAI({
+    apiKey,
+    model,
+    maxTokens,
+    ...(model.startsWith("gpt-5") ? { reasoningEffort: "low" } : { temperature: 0.1 }),
+  });
+}
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (typeof block === "string") return block;
+        if (!block || typeof block !== "object") return "";
+
+        const candidate = block as { type?: string; text?: string; reasoning?: string };
+        if (typeof candidate.text === "string") return candidate.text;
+        if (candidate.type === "reasoning" && typeof candidate.reasoning === "string") return candidate.reasoning;
+        return "";
+      })
+      .join("\n")
+      .trim();
+  }
+
+  return "";
+}
+
 @Injectable()
 export class AnnouncementReportService {
   private readonly logger = new Logger(AnnouncementReportService.name);
@@ -221,6 +266,20 @@ export class AnnouncementReportService {
       .filter(Boolean)
       .join("\n");
 
+    const compactUserMessage = [
+      `OGŁOSZENIE: ${announcement.title}`,
+      announcement.description ? `OPIS: ${announcement.description}` : null,
+      announcement.searchContext ? `KONTEKST: ${announcement.searchContext}` : null,
+      locationContext ? `LOKALIZACJA: ${locationContext}` : null,
+      `\nSKRÓT POZYCJI:\n${itemsContext.slice(0, 2_500)}`,
+      attachmentTexts.length > 0
+        ? `\nNAJWAŻNIEJSZE ZAŁĄCZNIKI:\n${attachmentTexts.join("\n\n---\n\n").slice(0, 12_000)}`
+        : "\nBrak dostępnych załączników tekstowych do analizy.",
+      "Zwróć finalny raport w Markdown z podanymi sekcjami. Jeśli czegoś nie da się potwierdzić z dokumentów, napisz to wprost.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
     let report = this.buildFallbackReport(
       {
         title: announcement.title,
@@ -235,38 +294,60 @@ export class AnnouncementReportService {
     let promptTokens = 0;
     let completionTokens = 0;
     let totalTokens = 0;
+    let llmUsed = false;
+    let llmFailureReason: string | null = null;
 
     if (!apiKey) {
       this.logger.warn("OPENAI_API_KEY not set — using fallback announcement report");
+      llmFailureReason = "OPENAI_API_KEY not set";
     } else {
       try {
-        const chat = new ChatOpenAI({
-          apiKey,
-          model: chatModel,
-          temperature: 0.1,
-          maxTokens: 4_000,
-        });
+        const chat = createChatModel(apiKey, chatModel, 8_000);
 
         const response = await chat.invoke([
           new SystemMessage(REPORT_SYSTEM_PROMPT),
           new HumanMessage(userMessage),
         ]);
 
-        const generated = typeof response.content === "string" ? response.content.trim() : "";
-        if (generated.length > 0) {
-          report = generated;
-        }
-
+        let generated = extractMessageText(response.content);
+        const finishReason = (response.response_metadata as Record<string, unknown> | undefined)?.finish_reason;
         const tokenUsageMeta = (response.response_metadata as Record<string, unknown> | undefined)?.tokenUsage as
           | Record<string, unknown>
           | undefined;
         promptTokens = Number(tokenUsageMeta?.promptTokens ?? 0);
         completionTokens = Number(tokenUsageMeta?.completionTokens ?? 0);
         totalTokens = Number(tokenUsageMeta?.totalTokens ?? promptTokens + completionTokens);
+
+        if (!generated) {
+          this.logger.warn(
+            `Primary report prompt returned empty content for ${announcementId}; retrying with compact prompt (finish_reason=${String(finishReason ?? "unknown")})`,
+          );
+
+          const retryChat = createChatModel(apiKey, chatModel, 8_000);
+          const retryResponse = await retryChat.invoke([
+            new SystemMessage(COMPACT_REPORT_SYSTEM_PROMPT),
+            new HumanMessage(compactUserMessage),
+          ]);
+
+          generated = extractMessageText(retryResponse.content);
+
+          const retryUsageMeta = (retryResponse.response_metadata as Record<string, unknown> | undefined)?.tokenUsage as
+            | Record<string, unknown>
+            | undefined;
+          promptTokens += Number(retryUsageMeta?.promptTokens ?? 0);
+          completionTokens += Number(retryUsageMeta?.completionTokens ?? 0);
+          totalTokens += Number(retryUsageMeta?.totalTokens ?? 0);
+        }
+
+        if (generated.length > 0) {
+          report = generated;
+          llmUsed = true;
+        } else {
+          llmFailureReason = "LLM returned empty content";
+        }
       } catch (error) {
-        this.logger.warn(
-          `Report LLM generation failed for ${announcementId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        llmFailureReason = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Report LLM generation failed for ${announcementId}: ${llmFailureReason}`);
       }
     }
 
@@ -287,6 +368,8 @@ export class AnnouncementReportService {
           title: announcement.title,
           reportLength: report.length,
           attachmentsProcessed: attachmentTexts.length,
+          llmUsed,
+          ...(llmFailureReason ? { llmFailureReason } : {}),
           ...(promptTokens || completionTokens ? { promptTokens, completionTokens, totalTokens } : {}),
         },
       });

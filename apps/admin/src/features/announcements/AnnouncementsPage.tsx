@@ -19,7 +19,7 @@ import {
   type AnnouncementSource,
   type AnnouncementStatus,
 } from "@leadfinder/contracts";
-import { fetchAnnouncements, triggerScraper, triggerEzScraper, triggerPzScraper, fetchQueueStatus, backfillDeadlines, backfillKind } from "./announcements-api";
+import { fetchAnnouncement, fetchAnnouncements, triggerScraper, triggerEzScraper, triggerPzScraper, fetchQueueStatus, backfillDeadlines, backfillKind } from "./announcements-api";
 import {
   RawDataDialog,
   SOURCE_LABELS,
@@ -49,15 +49,17 @@ function readInitialAnnouncementFilters(): {
   search: string;
   source: AnnouncementSource | "ALL";
   status: AnnouncementStatus | "ALL";
+  announcementId: string | null;
 } {
   if (typeof window === "undefined") {
-    return { search: "", source: "ALL", status: "ALL" };
+    return { search: "", source: "ALL", status: "ALL", announcementId: null };
   }
 
   const params = new URLSearchParams(window.location.search);
   const search = params.get("search")?.trim() ?? "";
   const source = params.get("source");
   const status = params.get("status");
+  const announcementId = params.get("id")?.trim() ?? null;
 
   return {
     search,
@@ -69,6 +71,7 @@ function readInitialAnnouncementFilters(): {
       status && STATUS_OPTIONS.some((option) => option.value === status)
         ? (status as AnnouncementStatus)
         : "ALL",
+    announcementId,
   };
 }
 
@@ -250,7 +253,20 @@ export function AnnouncementsPage() {
       }),
   });
 
+  const exactAnnouncementQuery = useQuery({
+    queryKey: ["announcement", initialFilters.announcementId],
+    queryFn: () => fetchAnnouncement(initialFilters.announcementId!),
+    enabled: Boolean(initialFilters.announcementId),
+  });
+
   const announcements = query.data?.data ?? [];
+  const exactAnnouncement = exactAnnouncementQuery.data?.data ?? null;
+  const visibleAnnouncements = useMemo(
+    () => exactAnnouncement
+      ? [exactAnnouncement, ...announcements.filter((announcement) => announcement.id !== exactAnnouncement.id)]
+      : announcements,
+    [announcements, exactAnnouncement],
+  );
   const meta = query.data?.meta;
 
   const columns = useMemo<ColumnDef<Announcement>[]>(
@@ -430,7 +446,7 @@ export function AnnouncementsPage() {
       )}
 
       <DataTable
-        data={announcements}
+        data={visibleAnnouncements}
         columns={columns}
         rowActions={rowActions}
         isLoading={query.isLoading}

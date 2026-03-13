@@ -303,15 +303,16 @@ function normalizeAttachment(
   bkApiBaseUrl?: string,
   sourceSystem?: AnnouncementSource,
 ): RankedAttachment | null {
-  const name = String(attachment.name ?? attachment.file?.name ?? "").trim();
+  const fileName = String(attachment.file?.name ?? "").trim();
+  const name = String(attachment.name ?? fileName ?? "").trim();
   const url = resolveAttachmentUrl(attachment, bkApiBaseUrl);
 
   if (!name || !url) return null;
 
-  const ext = getExtension(name, attachment.type);
+  const ext = getExtension(fileName || name || url, attachment.type);
   if (!ext || !SUPPORTED_EXTENSIONS.has(ext)) return null;
 
-  const score = scoreAttachment(name, ext);
+  const score = scoreAttachment([name, fileName].filter(Boolean).join(" "), ext);
   const identity = attachment.file?.uri?.trim() || stripQueryString(url);
   return {
     name,

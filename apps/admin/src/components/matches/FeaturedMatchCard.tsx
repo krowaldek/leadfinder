@@ -26,6 +26,35 @@ interface FeaturedMatchCardProps {
   onOpenReport: () => void;
 }
 
+function extractFallbackFromReport(report: string | null | undefined): string | null {
+  if (!report) return null;
+  const lines = report.split('\n');
+  for (const line of lines) {
+    const l = line.toLowerCase();
+    if ((l.includes('szacowan') || l.includes('łączn') || l.includes('razem') || l.includes('wartość') || l.includes('koszt') || l.includes('budżet')) && l.includes('pln')) {
+      const totalMatch = line.match(/=\s*([0-9][\d\s,.]*)\s*pln/i);
+      if (totalMatch && totalMatch[1]) {
+        const numericStr = totalMatch[1].replace(/[\s,.]/g, "");
+        if (!isNaN(Number(numericStr)) && Number(numericStr) > 0) {
+          return numericStr;
+        }
+      }
+
+      const beforePln = line.split(/pln/i)[0] ?? "";
+      const numberMatches = [...beforePln.matchAll(/[0-9][\d\s,.]*/g)];
+      const lastNumber = numberMatches.at(-1)?.[0];
+
+      if (lastNumber) {
+        const numericStr = lastNumber.replace(/[\s,.]/g, "");
+        if (!isNaN(Number(numericStr)) && Number(numericStr) > 0) {
+          return numericStr;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export function FeaturedMatchCard({
   match,
   statusPending,
@@ -69,41 +98,33 @@ export function FeaturedMatchCard({
   );
   const remainingSections = reportSections.filter((s) => s !== aiSubjectSection && s !== aiCriteriaSection);
 
+  const exactValue = match.announcement.valueMax || match.announcement.valueMin;
+  const fallbackAiValue = extractFallbackFromReport(match.announcement.detailedReport);
+  const displayValue = exactValue || match.announcement.llmEstimatedValue || fallbackAiValue;
+  const isAiEstimated = !exactValue && (!!match.announcement.llmEstimatedValue || !!fallbackAiValue);
+
   return (
     <Card className="flex flex-col overflow-hidden rounded-[32px] border border-primary/10 bg-card shadow-sm xl:flex-row">
-      {/* LEFT SIDE: Decorative Pillar like the image "Server Rack" */}
-      <div className="relative flex w-full flex-col justify-between bg-zinc-950 p-6 xl:w-72 2xl:w-[320px] xl:shrink-0">
-        <div className="absolute inset-0 z-0 bg-[linear-gradient(110deg,#0a0a0a_0%,#182333_100%)] opacity-80" />
-        {/* Fake decorative texture resembling technical gear/rack */}
-        <div className="absolute inset-x-4 inset-y-12 z-0 rounded-xl border border-zinc-800/50 bg-[repeating-linear-gradient(0deg,transparent,transparent_8px,#18181b_8px,#18181b_10px)] opacity-60" />
-
-        <div className="relative z-10 flex flex-wrap gap-3">
-          {isUrgent ? (
-            <div className="inline-flex items-center rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-white shadow-lg">
-              <AlertCircle className="mr-1.5 size-3.5" />
-              Pilne zlecenie
-            </div>
-          ) : (
-            <div className="inline-flex items-center rounded-full bg-zinc-800/80 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-zinc-300 ring-1 ring-white/10">
-              {MATCH_STATUS_LABELS[match.status] || "Aktywne"}
-            </div>
-          )}
-        </div>
-
-        <div className="relative z-10 mt-24 xl:mt-auto">
-          <div className="text-zinc-500 text-xs font-medium uppercase tracking-widest">Temat wyszukiwania</div>
-          <div className="mt-1 text-lg font-semibold text-zinc-100">{match.topic.title}</div>
-        </div>
-      </div>
-
       {/* RIGHT SIDE: Main Content */}
       <div className="flex flex-1 flex-col p-6 sm:p-8 xl:p-10">
         {/* Header Area */}
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row">
           <div className="flex-1">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-              <Building2 className="size-4" />
-              {match.topic.projectName || "Dopasowany Projekt"}
+            <div className="flex flex-wrap items-center gap-4 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Building2 className="size-4" />
+                {match.topic.projectName || "Dopasowany Projekt"}
+              </div>
+              {isUrgent ? (
+                <div className="inline-flex items-center rounded-full bg-blue-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
+                  <AlertCircle className="mr-1.5 size-3" />
+                  Pilne zlecenie
+                </div>
+              ) : (
+                <div className="inline-flex items-center rounded-full bg-muted px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground ring-1 ring-border">
+                  {MATCH_STATUS_LABELS[match.status] || "Aktywne"}
+                </div>
+              )}
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-bold leading-tight text-foreground sm:text-3xl">
@@ -117,20 +138,20 @@ export function FeaturedMatchCard({
             </div>
             <div className="mt-5 flex items-baseline gap-3">
               <span className="text-3xl font-extrabold tracking-tight text-blue-600 sm:text-4xl">
-                {match.announcement.llmEstimatedValue ? formatMoney(match.announcement.llmEstimatedValue) : "Wartość nieznana"}
+                {displayValue ? formatMoney(displayValue) : "Wartość nieznana"}
               </span>
-              {match.announcement.llmEstimatedValue && (
+              {displayValue && (
                 <span className="text-xs font-bold uppercase tracking-wide text-blue-400">
                   PLN<br />
-                  brutto
+                  brutto {isAiEstimated && <span className="opacity-75 italic">(szacowana)</span>}
                 </span>
               )}
             </div>
           </div>
 
           <div className="flex flex-col items-center shrink-0">
-            <MatchScoreRing similarity={match.similarity} size={100} showLabel={false} />
-            <span className="mt-3 text-[11px] font-bold tracking-widest text-blue-600 uppercase">
+            <MatchScoreRing similarity={match.similarity} size={140} showLabel={false} />
+            <span className="mt-4 text-[11px] font-bold tracking-widest text-blue-600 uppercase">
               Dopasowanie
             </span>
           </div>
