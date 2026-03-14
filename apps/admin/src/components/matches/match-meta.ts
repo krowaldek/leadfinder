@@ -26,6 +26,19 @@ export const SOURCE_LABELS: Record<string, string> = {
   PLATFORMA_ZAKUPOWA: "Platforma Zakupowa",
 };
 
+type PartAwareAnnouncement = {
+  sourceSystem?: string;
+  partIndex?: number;
+  isMultiPart?: boolean;
+  displayPartNumber?: number | null;
+};
+
+type SourceAwareAnnouncement = PartAwareAnnouncement & {
+  url: string;
+  sourceSystem: string;
+  title: string;
+};
+
 export function buildAnnouncementPanelHref(
   announcement: Pick<ClientMatchResponse["announcement"], "id" | "externalId" | "sourceSystem" | "partIndex">,
 ) {
@@ -37,6 +50,55 @@ export function buildAnnouncementPanelHref(
   });
 
   return `/announcements?${params.toString()}`;
+}
+
+export function getAnnouncementPartLabel(
+  announcement: PartAwareAnnouncement,
+) {
+  const displayPartNumber = announcement.displayPartNumber
+    ?? (announcement.isMultiPart && typeof announcement.partIndex === "number"
+      ? announcement.partIndex + 1
+      : null);
+
+  if (!announcement.isMultiPart || !displayPartNumber) {
+    return null;
+  }
+
+  return `Część ${displayPartNumber}`;
+}
+
+export function getAnnouncementSourceCtaLabel(
+  announcement: PartAwareAnnouncement,
+) {
+  const partLabel = getAnnouncementPartLabel(announcement);
+  return partLabel ? `Przejdź do ${partLabel.toLocaleLowerCase("pl-PL")}` : "Przejdź do oferty";
+}
+
+export function buildAnnouncementSourceHref(
+  announcement: SourceAwareAnnouncement,
+) {
+  if (
+    announcement.sourceSystem !== "BAZA_KONKURENCYJNOSCI"
+    || !announcement.isMultiPart
+    || !announcement.displayPartNumber
+  ) {
+    return announcement.url;
+  }
+
+  const fragmentText = normalizeTextFragment(announcement.title)
+    || `Część ${announcement.displayPartNumber}`;
+  const baseUrl = announcement.url.split("#")[0] ?? announcement.url;
+
+  return `${baseUrl}#:~:text=${encodeURIComponent(fragmentText)}`;
+}
+
+function normalizeTextFragment(text: string | null | undefined) {
+  if (!text) return null;
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length < 3) return null;
+
+  return normalized.slice(0, 120);
 }
 
 export function formatMoney(value: string | null | undefined) {

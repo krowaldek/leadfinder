@@ -135,6 +135,7 @@ export class ClientsService {
             deadlineAt: true,
             valueMin: true,
             valueMax: true,
+            rawData: true,
           },
         },
       },
@@ -142,7 +143,13 @@ export class ClientsService {
     });
 
     return {
-      data: matches.map((m) => ({
+      data: matches.map((m) => {
+        const rawData = m.announcement.rawData as { orders?: unknown[] } | null;
+        const ordersCount = Array.isArray(rawData?.orders) ? rawData.orders.length : 0;
+        const isMultiPart =
+          m.announcement.sourceSystem === "BAZA_KONKURENCYJNOSCI" && ordersCount > 1;
+
+        return {
         id: m.id,
         topicId: m.topicId,
         announcementId: m.announcementId,
@@ -171,9 +178,12 @@ export class ClientsService {
           deadlineAt: m.announcement.deadlineAt?.toISOString() ?? null,
           valueMin: m.announcement.valueMin?.toString() ?? null,
           valueMax: m.announcement.valueMax?.toString() ?? null,
+          isMultiPart,
+          displayPartNumber: isMultiPart ? m.announcement.partIndex + 1 : null,
         },
         createdAt: m.createdAt.toISOString(),
-      })),
+        };
+      }),
       meta: { total: matches.length },
     };
   }

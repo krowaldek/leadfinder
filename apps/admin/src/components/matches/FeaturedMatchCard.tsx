@@ -1,14 +1,18 @@
+import { useQuery } from "@tanstack/react-query";
 import { Building2, CheckCircle2, FileText, Info, ThumbsDown, ThumbsUp, Link2, Sparkles, AlertCircle } from "lucide-react";
 import { type ClientMatchResponse } from "@leadfinder/contracts";
 import { format, differenceInDays, differenceInHours } from "date-fns";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { fetchAnnouncement } from "@/features/announcements/announcements-api";
 import { cn } from "@/lib/utils";
 
 import {
+  buildAnnouncementSourceHref,
   buildAnnouncementPanelHref,
   formatMoney,
+  getAnnouncementSourceCtaLabel,
   getDeadlineMeta,
   KIND_LABELS,
   MATCH_STATUS_LABELS,
@@ -62,9 +66,34 @@ export function FeaturedMatchCard({
   onOpenDetails,
   onOpenReport,
 }: FeaturedMatchCardProps) {
+  const announcementWithPartMeta = match.announcement as typeof match.announcement & {
+    isMultiPart?: boolean;
+    displayPartNumber?: number | null;
+  };
+
+  const announcementQuery = useQuery({
+    queryKey: ["announcement", match.announcement.id],
+    queryFn: () => fetchAnnouncement(match.announcement.id),
+    enabled: match.announcement.sourceSystem === "BAZA_KONKURENCYJNOSCI",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const announcementDetails = announcementQuery.data?.data;
+  const rawData = announcementDetails?.rawData as { orders?: unknown[] } | undefined;
+  const fallbackIsMultiPart = Array.isArray(rawData?.orders) && rawData.orders.length > 1;
+  const partAwareAnnouncement = {
+    ...announcementWithPartMeta,
+    isMultiPart: announcementWithPartMeta.isMultiPart ?? fallbackIsMultiPart,
+    displayPartNumber:
+      announcementWithPartMeta.displayPartNumber
+      ?? (fallbackIsMultiPart ? match.announcement.partIndex + 1 : null),
+  };
+
   const deadlineMeta = getDeadlineMeta(match.announcement.deadlineAt);
   const searchContext = parseSearchContext(match.announcement.searchContext);
   const panelHref = buildAnnouncementPanelHref(match.announcement);
+  const sourceHref = buildAnnouncementSourceHref(partAwareAnnouncement);
+  const sourceCtaLabel = getAnnouncementSourceCtaLabel(partAwareAnnouncement);
   const reportAvailable = Boolean(match.announcement.detailedReport?.trim());
 
   // Determine if it's "urgent" (e.g. deadline is soon and not expired)
@@ -248,13 +277,15 @@ export function FeaturedMatchCard({
         {/* Bottom Actions Row */}
         <div className="mt-12 flex flex-col items-stretch gap-4 sm:flex-row sm:items-center">
           <a
-              href={match.announcement.url}
+            href={sourceHref}
+            target="_blank"
+            rel="noopener noreferrer"
             className={cn(
               buttonVariants(),
               "h-14 flex-1 rounded-2xl bg-blue-600 text-base font-bold text-white transition-colors hover:bg-blue-700"
             )}
           >
-            Przejdź do oferty
+            {sourceCtaLabel}
           </a>
           
           <div className="flex gap-4 sm:gap-2">

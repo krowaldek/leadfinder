@@ -76,6 +76,8 @@ export const clientMatchAnnouncementSchema = z.object({
   searchContext: z.string().optional(),
   detailedReport: z.string().nullable().optional(),
   llmEstimatedValue: z.string().nullable().optional(),
+  isMultiPart: z.boolean().optional(),
+  displayPartNumber: z.number().int().positive().nullable().optional(),
 });
 
 export const clientMatchResponseSchema = z.object({
