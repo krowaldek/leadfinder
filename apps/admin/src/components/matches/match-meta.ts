@@ -71,7 +71,7 @@ export function getAnnouncementSourceCtaLabel(
   announcement: PartAwareAnnouncement,
 ) {
   const partLabel = getAnnouncementPartLabel(announcement);
-  return partLabel ? `Przejdź do ${partLabel.toLocaleLowerCase("pl-PL")}` : "Przejdź do oferty";
+  return partLabel ? `Przejdź do [${partLabel.toLocaleLowerCase("pl-PL")}]` : "Przejdź do oferty";
 }
 
 export function buildAnnouncementSourceHref(
