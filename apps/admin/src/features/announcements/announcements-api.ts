@@ -62,19 +62,39 @@ export async function backfillDeadlines() {
 }
 
 export async function backfillKind() {
-  const response = await api.post("/scrapers/embedding/backfill-kind");
+  const response = await api.post("/scrapers/embedding/backfill");
   return response.data as { queued: number; status: string };
 }
 
 export interface QueueStatus {
-  counts: { waiting: number; active: number; completed: number; failed: number; delayed: number };
+  counts: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  };
   schedule: { name: string; cron: string; next: number }[];
-  recentCompleted: { id: string | undefined; name: string; addedAt: string | null; processedAt: string | null; finishedAt: string | null; failedReason: string | null }[];
-  recentFailed: { id: string | undefined; name: string; addedAt: string | null; processedAt: string | null; finishedAt: string | null; failedReason: string | null }[];
+  recentCompleted: {
+    id: string | undefined;
+    name: string;
+    addedAt: string | null;
+    processedAt: string | null;
+    finishedAt: string | null;
+    failedReason: string | null;
+  }[];
+  recentFailed: {
+    id: string | undefined;
+    name: string;
+    addedAt: string | null;
+    processedAt: string | null;
+    finishedAt: string | null;
+    failedReason: string | null;
+  }[];
 }
 
 export async function fetchQueueStatus() {
-  const response = await api.get("/scrapers/bk/queue-status");
+  const response = await api.get("/scrapers/queue-status");
   return response.data as QueueStatus;
 }
 
@@ -103,8 +123,18 @@ export async function searchAnnouncementsAi({
   const result = searchResponseSchema.safeParse(response.data);
   if (!result.success) {
     console.error("[searchAnnouncementsAi] Zod validation failed — issues:");
-    console.table(result.error.issues.map((i) => ({ path: i.path.join("."), code: i.code, message: i.message, received: (i as { received?: unknown }).received })));
-    console.error("[searchAnnouncementsAi] raw meta:", JSON.stringify(response.data?.meta, null, 2));
+    console.table(
+      result.error.issues.map((i) => ({
+        path: i.path.join("."),
+        code: i.code,
+        message: i.message,
+        received: (i as { received?: unknown }).received,
+      })),
+    );
+    console.error(
+      "[searchAnnouncementsAi] raw meta:",
+      JSON.stringify(response.data?.meta, null, 2),
+    );
     throw new Error(`Response validation failed: ${result.error.message}`);
   }
   return result.data;
