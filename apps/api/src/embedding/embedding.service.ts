@@ -8,7 +8,11 @@ import { Queue } from "bullmq";
 import type { AnnouncementSource } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
-import { AppEmbeddings, getEmbeddingModel, getEmbeddingProvider } from "../common/embeddings.js";
+import {
+  AppEmbeddings,
+  getEmbeddingModel,
+  getEmbeddingProvider,
+} from "../common/embeddings.js";
 import {
   extractAttachmentTexts,
   fetchDirectPdfEmbeddingAttachments,
@@ -74,7 +78,9 @@ function createChatModel(apiKey: string, model: string, maxTokens: number) {
     apiKey,
     model,
     maxTokens,
-    ...(model.startsWith("gpt-5") ? { reasoningEffort: "low" } : { temperature: 0 }),
+    ...(model.startsWith("gpt-5")
+      ? { reasoningEffort: "low" }
+      : { temperature: 0 }),
   });
 }
 
@@ -133,7 +139,9 @@ export class EmbeddingService {
   // Announcement embedding
   // ---------------------------------------------------------------------------
 
-  async generateAnnouncementEmbedding(announcementId: string): Promise<{ tokenUsage: TokenUsage | null }> {
+  async generateAnnouncementEmbedding(
+    announcementId: string,
+  ): Promise<{ tokenUsage: TokenUsage | null }> {
     const announcement = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
       select: {
@@ -154,15 +162,27 @@ export class EmbeddingService {
 
     let tokenUsage: TokenUsage | null = null;
     if (!announcement.kind || !announcement.detailedReport) {
-      tokenUsage = await this.analyseAndUpdateAnnouncement(announcementId, announcement);
+      tokenUsage = await this.analyseAndUpdateAnnouncement(
+        announcementId,
+        announcement,
+      );
     }
 
     const refreshed = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
-      select: { searchContext: true, kind: true, detailedReport: true, rawData: true, sourceSystem: true },
+      select: {
+        searchContext: true,
+        kind: true,
+        detailedReport: true,
+        rawData: true,
+        sourceSystem: true,
+      },
     });
 
-    if (!refreshed) throw new NotFoundException(`Announcement not found after analysis: ${announcementId}`);
+    if (!refreshed)
+      throw new NotFoundException(
+        `Announcement not found after analysis: ${announcementId}`,
+      );
 
     await this.buildAndSaveEmbedding(announcementId, refreshed);
     return { tokenUsage };
@@ -170,18 +190,29 @@ export class EmbeddingService {
 
   private async analyseAndUpdateAnnouncement(
     announcementId: string,
-    announcement: { title: string; description: string | null; searchContext: string; rawData: unknown; sourceSystem: string | null },
+    announcement: {
+      title: string;
+      description: string | null;
+      searchContext: string;
+      rawData: unknown;
+      sourceSystem: string | null;
+    },
   ): Promise<TokenUsage | null> {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) {
       this.logger.warn("OPENAI_API_KEY not set — skipping analysis");
-      await this.prisma.announcement.update({ where: { id: announcementId }, data: { kind: "INNE" } });
+      await this.prisma.announcement.update({
+        where: { id: announcementId },
+        data: { kind: "INNE" },
+      });
       return null;
     }
 
     // Extract attachment texts for LLM context
     const rawData = announcement.rawData as Record<string, unknown> | null;
-    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData?.attachments)
+    const allAttachments: RawAttachmentLike[] = Array.isArray(
+      rawData?.attachments,
+    )
       ? (rawData.attachments as RawAttachmentLike[])
       : [];
     let attachmentTexts: string[] = [];
@@ -190,7 +221,9 @@ export class EmbeddingService {
         const bkApiBaseUrl = this.config.get<string>("BK_API_BASE_URL");
         const rankedAttachments = normalizeAndRankAttachments(allAttachments, {
           bkApiBaseUrl,
-          sourceSystem: announcement.sourceSystem as import("@prisma/client").AnnouncementSource | undefined,
+          sourceSystem: announcement.sourceSystem as
+            | import("@prisma/client").AnnouncementSource
+            | undefined,
           maxAttachments: MAX_ANALYSIS_ATTACHMENTS,
         });
         const cache = this.createAttachmentCacheAdapter();
@@ -205,29 +238,48 @@ export class EmbeddingService {
           cache,
         );
       } catch (attachErr) {
-        this.logger.warn(`analyseAndUpdateAnnouncement: attachment extraction failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`);
+        this.logger.warn(
+          `analyseAndUpdateAnnouncement: attachment extraction failed: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`,
+        );
       }
     }
 
-    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
-    const analysis = await this.analyseAnnouncement(announcement, attachmentTexts, apiKey, chatModel);
+    const chatModel =
+      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+    const analysis = await this.analyseAnnouncement(
+      announcement,
+      attachmentTexts,
+      apiKey,
+      chatModel,
+    );
 
     await this.prisma.announcement.update({
       where: { id: announcementId },
       data: {
         kind: analysis.kind,
         detailedReport: analysis.detailedReport,
-        llmEstimatedValue: analysis.estimatedValue != null ? String(analysis.estimatedValue) : null,
+        llmEstimatedValue:
+          analysis.estimatedValue != null
+            ? String(analysis.estimatedValue)
+            : null,
       },
     });
 
-    this.logger.log(`Analysed announcement ${announcementId} → kind=${analysis.kind}, attachments=${attachmentTexts.length}`);
+    this.logger.log(
+      `Analysed announcement ${announcementId} → kind=${analysis.kind}, attachments=${attachmentTexts.length}`,
+    );
     return analysis.tokenUsage;
   }
 
   private async buildAndSaveEmbedding(
     announcementId: string,
-    data: { searchContext: string; kind: string | null; detailedReport: string | null; rawData: unknown; sourceSystem: string | null },
+    data: {
+      searchContext: string;
+      kind: string | null;
+      detailedReport: string | null;
+      rawData: unknown;
+      sourceSystem: string | null;
+    },
   ): Promise<void> {
     const embeddingInput = this.buildEmbeddingInput({
       kind: (data.kind ?? "INNE") as AnnouncementKind,
@@ -261,11 +313,18 @@ export class EmbeddingService {
         WHERE id = ${announcementId}::uuid
       `;
 
-      this.logger.log(`Embedded announcement ${announcementId} → kind=${kind} (${vector.length} dims)`);
+      this.logger.log(
+        `Embedded announcement ${announcementId} → kind=${kind} (${vector.length} dims)`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to embed announcement ${announcementId}: ${msg}`);
-      await this.prisma.announcement.update({ where: { id: announcementId }, data: { embeddingStatus: "ERROR" } });
+      this.logger.error(
+        `Failed to embed announcement ${announcementId}: ${msg}`,
+      );
+      await this.prisma.announcement.update({
+        where: { id: announcementId },
+        data: { embeddingStatus: "ERROR" },
+      });
       throw err;
     }
   }
@@ -304,7 +363,10 @@ export class EmbeddingService {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to embed topic ${topicId}: ${msg}`);
-      await this.prisma.topic.update({ where: { id: topicId }, data: { embeddingStatus: "ERROR" } });
+      await this.prisma.topic.update({
+        where: { id: topicId },
+        data: { embeddingStatus: "ERROR" },
+      });
       throw err;
     }
   }
@@ -319,6 +381,7 @@ export class EmbeddingService {
       { announcementId },
       {
         jobId: `announcement-embed-${announcementId}`,
+        priority: 10,
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { count: 100 },
@@ -333,6 +396,7 @@ export class EmbeddingService {
       { topicId },
       {
         jobId: `topic-embed-${topicId}`,
+        priority: 1,
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { count: 100 },
@@ -343,7 +407,13 @@ export class EmbeddingService {
 
   async backfillAnnouncements(): Promise<number> {
     const announcements = await this.prisma.announcement.findMany({
-      where: { OR: [{ kind: null }, { detailedReport: null }, { embeddingStatus: { not: "EMBEDDED" } }] },
+      where: {
+        OR: [
+          { kind: null },
+          { detailedReport: null },
+          { embeddingStatus: { not: "EMBEDDED" } },
+        ],
+      },
       select: { id: true },
     });
 
@@ -361,7 +431,9 @@ export class EmbeddingService {
       await this.enqueueAnnouncementEmbedding(a.id);
     }
 
-    this.logger.log(`backfillAnnouncements: queued ${announcements.length} jobs`);
+    this.logger.log(
+      `backfillAnnouncements: queued ${announcements.length} jobs`,
+    );
     return announcements.length;
   }
 
@@ -398,7 +470,9 @@ export class EmbeddingService {
   ): Promise<number[][]> {
     if (getEmbeddingProvider(this.config) !== "GOOGLE") return [];
 
-    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData?.attachments)
+    const allAttachments: RawAttachmentLike[] = Array.isArray(
+      rawData?.attachments,
+    )
       ? (rawData.attachments as RawAttachmentLike[])
       : [];
 
@@ -412,7 +486,10 @@ export class EmbeddingService {
 
     const pdfAttachments = await fetchDirectPdfEmbeddingAttachments(
       rankedAttachments,
-      { maxAttachments: MAX_DIRECT_EMBEDDING_ATTACHMENTS, maxPages: MAX_DIRECT_EMBEDDING_PDF_PAGES },
+      {
+        maxAttachments: MAX_DIRECT_EMBEDDING_ATTACHMENTS,
+        maxPages: MAX_DIRECT_EMBEDDING_PDF_PAGES,
+      },
       this.logger,
     );
 
@@ -421,20 +498,29 @@ export class EmbeddingService {
     return embedder.embedPdfDocuments(pdfAttachments.map((a) => a.buffer));
   }
 
-  private blendVectors(baseVector: number[], attachmentVectors: number[][]): number[] {
+  private blendVectors(
+    baseVector: number[],
+    attachmentVectors: number[][],
+  ): number[] {
     if (attachmentVectors.length === 0) return baseVector;
 
-    const compatibleAttachments = attachmentVectors.filter((v) => v.length === baseVector.length);
+    const compatibleAttachments = attachmentVectors.filter(
+      (v) => v.length === baseVector.length,
+    );
     if (compatibleAttachments.length === 0) return baseVector;
 
     const normalizedBase = this.normalizeVector(baseVector);
-    const normalizedAttachments = compatibleAttachments.map((v) => this.normalizeVector(v));
-    const attachmentWeight = ATTACHMENT_VECTOR_WEIGHT / normalizedAttachments.length;
+    const normalizedAttachments = compatibleAttachments.map((v) =>
+      this.normalizeVector(v),
+    );
+    const attachmentWeight =
+      ATTACHMENT_VECTOR_WEIGHT / normalizedAttachments.length;
     const baseWeight = 1 - ATTACHMENT_VECTOR_WEIGHT;
 
     const blended = normalizedBase.map((value, index) => {
       let total = value * baseWeight;
-      for (const av of normalizedAttachments) total += av[index] * attachmentWeight;
+      for (const av of normalizedAttachments)
+        total += av[index] * attachmentWeight;
       return total;
     });
 
@@ -447,25 +533,42 @@ export class EmbeddingService {
     return vector.map((v) => v / magnitude);
   }
 
-  private async classifyKind(searchContext: string, apiKey: string, model: string): Promise<AnnouncementKind> {
+  private async classifyKind(
+    searchContext: string,
+    apiKey: string,
+    model: string,
+  ): Promise<AnnouncementKind> {
     const chat = createChatModel(apiKey, model, 20);
     const response = await chat.invoke([
       new SystemMessage(CLASSIFICATION_PROMPT),
       new HumanMessage(searchContext),
     ]);
 
-    const raw = typeof response.content === "string" ? response.content.trim().toUpperCase() : "";
+    const raw =
+      typeof response.content === "string"
+        ? response.content.trim().toUpperCase()
+        : "";
     const matched = ANNOUNCEMENT_KINDS.find((k) => k === raw);
-    if (!matched) this.logger.warn(`Unexpected classification: "${raw}" — using INNE`);
+    if (!matched)
+      this.logger.warn(`Unexpected classification: "${raw}" — using INNE`);
     return matched ?? "INNE";
   }
 
   private async analyseAnnouncement(
-    announcement: { title: string; description: string | null; searchContext: string },
+    announcement: {
+      title: string;
+      description: string | null;
+      searchContext: string;
+    },
     attachmentTexts: string[],
     apiKey: string,
     model: string,
-  ): Promise<{ kind: AnnouncementKind; detailedReport: string; estimatedValue: number | null; tokenUsage: TokenUsage | null }> {
+  ): Promise<{
+    kind: AnnouncementKind;
+    detailedReport: string;
+    estimatedValue: number | null;
+    tokenUsage: TokenUsage | null;
+  }> {
     try {
       const chat = createChatModel(apiKey, model, 4_000);
 
@@ -489,28 +592,51 @@ export class EmbeddingService {
       ]);
 
       const tokenUsage = extractTokenUsage(response.response_metadata);
-      const raw = typeof response.content === "string" ? response.content.trim() : "";
+      const raw =
+        typeof response.content === "string" ? response.content.trim() : "";
       const match = raw.match(/\{[\s\S]*\}/);
       if (!match) throw new Error("Analysis response did not contain JSON");
 
-      const parsed = JSON.parse(match[0]) as { kind?: unknown; detailedReport?: unknown; estimatedValue?: unknown };
+      const parsed = JSON.parse(match[0]) as {
+        kind?: unknown;
+        detailedReport?: unknown;
+        estimatedValue?: unknown;
+      };
       const kind = ANNOUNCEMENT_KINDS.find((k) => k === parsed.kind) ?? "INNE";
       const estimatedValue =
-        typeof parsed.estimatedValue === "number" && Number.isFinite(parsed.estimatedValue)
+        typeof parsed.estimatedValue === "number" &&
+        Number.isFinite(parsed.estimatedValue)
           ? parsed.estimatedValue
           : null;
       const detailedReport =
-        typeof parsed.detailedReport === "string" && parsed.detailedReport.trim().length > 0
+        typeof parsed.detailedReport === "string" &&
+        parsed.detailedReport.trim().length > 0
           ? parsed.detailedReport.trim()
-          : this.buildFallbackReport(announcement.title, announcement.description, announcement.searchContext, estimatedValue);
+          : this.buildFallbackReport(
+              announcement.title,
+              announcement.description,
+              announcement.searchContext,
+              estimatedValue,
+            );
 
       return { kind, detailedReport, estimatedValue, tokenUsage };
     } catch (err) {
-      this.logger.warn(`analyseAnnouncement failed: ${err instanceof Error ? err.message : String(err)}`);
-      const kind = await this.classifyKind(announcement.searchContext, apiKey, model);
+      this.logger.warn(
+        `analyseAnnouncement failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      const kind = await this.classifyKind(
+        announcement.searchContext,
+        apiKey,
+        model,
+      );
       return {
         kind,
-        detailedReport: this.buildFallbackReport(announcement.title, announcement.description, announcement.searchContext, null),
+        detailedReport: this.buildFallbackReport(
+          announcement.title,
+          announcement.description,
+          announcement.searchContext,
+          null,
+        ),
         estimatedValue: null,
         tokenUsage: null,
       };
@@ -589,4 +715,3 @@ export class EmbeddingService {
     ].join("\n");
   }
 }
-

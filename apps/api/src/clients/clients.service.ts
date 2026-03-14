@@ -355,6 +355,7 @@ export class ClientsService {
       { topicId },
       {
         jobId: `topic-embed-${topicId}-${Date.now()}`,
+        priority: 1,
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { count: 20 },

@@ -35,6 +35,7 @@ async function main() {
       { announcementId: announcement.id },
       {
         jobId: `announcement-embed-resume-${announcement.id}-${runId}`,
+        priority: 10,
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { count: 100 },

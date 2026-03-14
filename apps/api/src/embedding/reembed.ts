@@ -76,13 +76,18 @@ function parseArgs(argv: string[]): CliOptions {
   const limitRaw = args.get("limit");
   const limit = typeof limitRaw === "string" ? Number(limitRaw) : null;
   const sourceSystems = parseListArg(
-    typeof args.get("source") === "string" ? String(args.get("source")) : undefined,
-  ).filter((value): value is SourceSystem => VALID_SOURCES.includes(value as SourceSystem));
+    typeof args.get("source") === "string"
+      ? String(args.get("source"))
+      : undefined,
+  ).filter((value): value is SourceSystem =>
+    VALID_SOURCES.includes(value as SourceSystem),
+  );
   const statuses = parseListArg(
-    typeof args.get("status") === "string" ? String(args.get("status")) : undefined,
-  ).filter(
-    (value): value is AnnouncementStatus =>
-      VALID_ITEM_STATUSES.includes(value as AnnouncementStatus),
+    typeof args.get("status") === "string"
+      ? String(args.get("status"))
+      : undefined,
+  ).filter((value): value is AnnouncementStatus =>
+    VALID_ITEM_STATUSES.includes(value as AnnouncementStatus),
   );
   const announcementIds = parseListArg(
     typeof args.get("announcement-id") === "string"
@@ -90,7 +95,9 @@ function parseArgs(argv: string[]): CliOptions {
       : undefined,
   );
   const itemIds = parseListArg(
-    typeof args.get("item-id") === "string" ? String(args.get("item-id")) : undefined,
+    typeof args.get("item-id") === "string"
+      ? String(args.get("item-id"))
+      : undefined,
   );
 
   if (limit != null && (!Number.isFinite(limit) || limit <= 0)) {
@@ -191,7 +198,9 @@ async function main() {
         queueEmbedJobs: selectedItems.filter(
           (item) => item.kind && item.detailedReport,
         ).length,
-        skippedMissingReportItems: options.readyForEmbedOnly ? needsReport.length : 0,
+        skippedMissingReportItems: options.readyForEmbedOnly
+          ? needsReport.length
+          : 0,
         sample: selectedItems.slice(0, 5).map((item) => ({
           announcementId: item.id,
           announcementStatus: item.embeddingStatus,
@@ -222,6 +231,7 @@ async function main() {
       { announcementId: item.id },
       {
         jobId: `${jobName.replace(/\./g, "-")}-manual-${item.id}-${runId}`,
+        priority: 10,
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { count: 100 },

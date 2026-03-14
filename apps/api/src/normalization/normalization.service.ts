@@ -88,7 +88,9 @@ export class NormalizationService {
     );
 
     const rawData = announcement.rawData as BkRawData;
-    const orders: BkOrder[] = Array.isArray(rawData?.orders) ? rawData.orders : [];
+    const orders: BkOrder[] = Array.isArray(rawData?.orders)
+      ? rawData.orders
+      : [];
 
     const parts: PartData[] =
       orders.length > 0
@@ -108,7 +110,8 @@ export class NormalizationService {
         title: firstPart.title,
         description: firstPart.description,
         searchContext: firstPart.searchContext,
-        valueMin: firstPart.price != null ? firstPart.price : announcement.valueMin,
+        valueMin:
+          firstPart.price != null ? firstPart.price : announcement.valueMin,
         detailedReport: null, // clear stale report
         embeddingStatus: "PENDING",
       },
@@ -175,6 +178,7 @@ export class NormalizationService {
         { announcementId: savedId },
         {
           jobId: `announcement-embed-${savedId}`,
+          priority: 10,
           attempts: 3,
           backoff: { type: "exponential", delay: 5_000 },
           removeOnComplete: { count: 100 },
@@ -209,7 +213,11 @@ export class NormalizationService {
 
       const title = order.title ?? `Część ${order.id}`;
       const description = descriptions.join("\n\n") || null;
-      const searchContext = this.buildSearchContext(title, description, cpvNames);
+      const searchContext = this.buildSearchContext(
+        title,
+        description,
+        cpvNames,
+      );
 
       const rawPrice =
         order.estimated_value ??
@@ -225,7 +233,10 @@ export class NormalizationService {
     });
   }
 
-  private buildGeneralPart(title: string, description: string | null): PartData[] {
+  private buildGeneralPart(
+    title: string,
+    description: string | null,
+  ): PartData[] {
     return [
       {
         title,
