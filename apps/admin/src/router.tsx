@@ -5,6 +5,7 @@ import {
   createRouter,
   redirect,
 } from "@tanstack/react-router";
+import { refreshSession } from "@/features/auth/auth-api";
 import { AppShell } from "@/components/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
@@ -18,10 +19,24 @@ import { TopicsPage } from "@/features/topics/TopicsPage";
 import { LogsPage } from "@/features/logs/LogsPage";
 import { getAuthSnapshot } from "@/stores/auth-store";
 
-function requireAuth() {
-  const { accessToken } = getAuthSnapshot();
-  if (!accessToken) {
-    throw redirect({ to: "/login" });
+async function requireAuth() {
+  const { accessToken, setSession, clearSession } = getAuthSnapshot();
+
+  if (accessToken) {
+    return;
+  }
+
+  try {
+    const session = await refreshSession();
+    setSession(session);
+  } catch {
+    clearSession();
+    throw redirect({
+      to: "/login",
+      search: {
+        redirect: window.location.pathname + window.location.search,
+      },
+    });
   }
 }
 
@@ -32,10 +47,22 @@ const rootRoute = createRootRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
-  beforeLoad: () => {
-    const { accessToken } = getAuthSnapshot();
+  validateSearch: (search: Record<string, unknown>) => ({
+    redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+  }),
+  beforeLoad: async ({ search }) => {
+    const { accessToken, setSession, clearSession } = getAuthSnapshot();
+
     if (accessToken) {
-      throw redirect({ to: "/users" });
+      throw redirect({ to: search.redirect ?? "/dashboard" });
+    }
+
+    try {
+      const session = await refreshSession();
+      setSession(session);
+      throw redirect({ to: search.redirect ?? "/dashboard" });
+    } catch {
+      clearSession();
     }
   },
   component: LoginPage,
@@ -51,7 +78,9 @@ const appLayoutRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => appLayoutRoute,
   path: "/",
-  beforeLoad: () => { throw redirect({ to: "/dashboard" }); },
+  beforeLoad: () => {
+    throw redirect({ to: "/dashboard" });
+  },
 });
 
 const dashboardRoute = createRoute({

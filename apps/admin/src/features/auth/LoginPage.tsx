@@ -2,20 +2,26 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { login, refreshSession } from "./auth-api";
+import { useState } from "react";
+import { login } from "./auth-api";
 import { loginSchema, type LoginInput } from "@leadfinder/contracts";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 export function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((state) => state.setSession);
-  const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [isRestoringSession] = useState(false);
 
   const form = useForm<LoginInput>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,29 +29,12 @@ export function LoginPage() {
     defaultValues: { email: "", password: "" },
   });
 
-  useEffect(() => {
-    let isMounted = true;
-    const tryRestoreSession = async () => {
-      try {
-        const session = await refreshSession();
-        if (!isMounted) return;
-        setSession(session);
-        await navigate({ to: "/users" });
-      } catch {
-      } finally {
-        if (isMounted) setIsRestoringSession(false);
-      }
-    };
-    void tryRestoreSession();
-    return () => { isMounted = false; };
-  }, [navigate, setSession]);
-
   const mutation = useMutation({
     mutationFn: login,
     onSuccess: async (session) => {
       setSession(session);
       toast.success("Zalogowano pomyślnie");
-      await navigate({ to: "/users" });
+      await navigate({ to: "/dashboard" });
     },
     onError: () => {
       toast.error("Logowanie nie powiodło się. Sprawdź dane logowania.");
@@ -76,7 +65,9 @@ export function LoginPage() {
                 placeholder="admin@leadfinder.local"
               />
               {form.formState.errors.email && (
-                <p className="text-xs text-destructive">{form.formState.errors.email.message}</p>
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.email.message}
+                </p>
               )}
             </div>
 
@@ -89,7 +80,9 @@ export function LoginPage() {
                 aria-invalid={!!form.formState.errors.password}
               />
               {form.formState.errors.password && (
-                <p className="text-xs text-destructive">{form.formState.errors.password.message}</p>
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.password.message}
+                </p>
               )}
             </div>
 
@@ -110,5 +103,3 @@ export function LoginPage() {
     </div>
   );
 }
-
-
