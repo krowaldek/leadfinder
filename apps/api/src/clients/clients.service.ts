@@ -19,8 +19,14 @@ import type {
   CreateTopic,
   UpdateTopic,
 } from "@leadfinder/contracts";
-import { CLIENT_MATCHING_QUEUE, ClientMatchingJob } from "./client-matching.constants.js";
-import { EMBEDDING_QUEUE, EmbeddingJob } from "../embedding/embedding-queue.constants.js";
+import {
+  CLIENT_MATCHING_QUEUE,
+  ClientMatchingJob,
+} from "./client-matching.constants.js";
+import {
+  EMBEDDING_QUEUE,
+  EmbeddingJob,
+} from "../embedding/embedding-queue.constants.js";
 
 @Injectable()
 export class ClientsService {
@@ -95,7 +101,9 @@ export class ClientsService {
   }
 
   async getMatches(clientId: string) {
-    const client = await this.prisma.client.findUnique({ where: { id: clientId } });
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+    });
     if (!client) throw new NotFoundException("Client not found");
 
     const matches = await this.prisma.clientMatch.findMany({
@@ -156,7 +164,8 @@ export class ClientsService {
           externalId: m.announcement.externalId,
           kind: m.announcement.kind ?? null,
           searchContext: m.announcement.searchContext,
-          llmEstimatedValue: m.announcement.llmEstimatedValue?.toString() ?? null,
+          llmEstimatedValue:
+            m.announcement.llmEstimatedValue?.toString() ?? null,
           detailedReport: m.announcement.detailedReport ?? null,
           publishedAt: m.announcement.publishedAt?.toISOString() ?? null,
           deadlineAt: m.announcement.deadlineAt?.toISOString() ?? null,
@@ -209,7 +218,11 @@ export class ClientsService {
     return { data: rows.map((p) => this.serializeProject(p)) };
   }
 
-  async updateProject(clientId: string, projectId: string, data: UpdateProject) {
+  async updateProject(
+    clientId: string,
+    projectId: string,
+    data: UpdateProject,
+  ) {
     const existing = await this.prisma.project.findFirst({
       where: { id: projectId, clientId },
     });
@@ -218,7 +231,9 @@ export class ClientsService {
       where: { id: projectId },
       data: {
         ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description }),
+        ...(data.description !== undefined && {
+          description: data.description,
+        }),
       },
       include: { _count: { select: { topics: true } } },
     });
@@ -241,7 +256,11 @@ export class ClientsService {
     });
     if (!project) throw new NotFoundException("Project not found");
 
-    const prepared = this.prepareTopicPayload(data.prompt, data.negativeKeywords ?? [], data.matchingProfile);
+    const prepared = this.prepareTopicPayload(
+      data.prompt,
+      data.negativeKeywords ?? [],
+      data.matchingProfile,
+    );
 
     const topic = await this.prisma.topic.create({
       data: {
@@ -269,12 +288,18 @@ export class ClientsService {
     if (!topic) throw new NotFoundException("Topic not found");
 
     const nextPrompt = data.prompt ?? topic.prompt;
-    const nextNegativeKeywords = data.negativeKeywords ?? topic.negativeKeywords;
-    const nextProfile = data.matchingProfile ?? parseTopicMatchingProfile(topic.prompt, topic.negativeKeywords);
-    const prepared = this.prepareTopicPayload(nextPrompt, nextNegativeKeywords, nextProfile);
+    const nextNegativeKeywords =
+      data.negativeKeywords ?? topic.negativeKeywords;
+    const nextProfile =
+      data.matchingProfile ??
+      parseTopicMatchingProfile(topic.prompt, topic.negativeKeywords);
+    const prepared = this.prepareTopicPayload(
+      nextPrompt,
+      nextNegativeKeywords,
+      nextProfile,
+    );
 
-    const promptChanged =
-      prepared.prompt !== topic.prompt;
+    const promptChanged = prepared.prompt !== topic.prompt;
 
     const updated = await this.prisma.topic.update({
       where: { id: topicId },
@@ -283,7 +308,8 @@ export class ClientsService {
         ...(data.prompt !== undefined || data.matchingProfile !== undefined
           ? { prompt: prepared.prompt }
           : {}),
-        ...(data.negativeKeywords !== undefined || data.matchingProfile !== undefined
+        ...(data.negativeKeywords !== undefined ||
+        data.matchingProfile !== undefined
           ? { negativeKeywords: prepared.negativeKeywords }
           : {}),
         // Reset embedding when prompt changes so it gets re-embedded
@@ -412,14 +438,20 @@ export class ClientsService {
     updatedAt: Date;
     _count: { matches: number };
   }) {
-    const matchingProfile = parseTopicMatchingProfile(topic.prompt, topic.negativeKeywords);
+    const matchingProfile = parseTopicMatchingProfile(
+      topic.prompt,
+      topic.negativeKeywords,
+    );
     return {
       id: topic.id,
       projectId: topic.projectId,
       title: topic.title,
       prompt: matchingProfile?.summary ?? topic.prompt,
       matchingProfile: matchingProfile ?? undefined,
-      embeddingStatus: topic.embeddingStatus as "PENDING" | "EMBEDDED" | "ERROR",
+      embeddingStatus: topic.embeddingStatus as
+        | "PENDING"
+        | "EMBEDDED"
+        | "ERROR",
       negativeKeywords: topic.negativeKeywords,
       matchCount: topic._count.matches,
       createdAt: topic.createdAt.toISOString(),
@@ -447,7 +479,10 @@ export class ClientsService {
       id: client.id,
       companyName: client.companyName,
       industry: client.industry,
-      geographicScope: client.geographicScope as "NATIONAL" | "REGIONAL" | "LOCAL",
+      geographicScope: client.geographicScope as
+        | "NATIONAL"
+        | "REGIONAL"
+        | "LOCAL",
       geographicDetails: client.geographicDetails,
       budgetDescription: client.budgetDescription,
       contactPersonName: client.contactPersonName,
@@ -471,16 +506,18 @@ export class ClientsService {
     const defaultCompanyName = domainName
       ? domainName.charAt(0).toUpperCase() + domainName.slice(1)
       : "Nowy klient";
-    const defaultContactName = (localPart ?? "")
-      .replace(/[._-]/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase())
-      .trim() || "Nieznany";
+    const defaultContactName =
+      (localPart ?? "")
+        .replace(/[._-]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+        .trim() || "Nieznany";
 
     let companyName = defaultCompanyName;
     let industry = activity.slice(0, 120);
     let topicTitle = activity.slice(0, 100);
     let topicProfile: TopicMatchingProfile = topicMatchingProfileSchema.parse({
-      summary: activity.length >= 10 ? activity : `Zamówienia związane z: ${activity}`,
+      summary:
+        activity.length >= 10 ? activity : `Zamówienia związane z: ${activity}`,
       mustHave: [],
       niceToHave: [],
       exclude: [],
@@ -519,7 +556,9 @@ Zasady:
 - niceToHave to dodatki i powiązane frazy
 - exclude ma eliminować typowe pomyłki i sąsiednie, ale błędne branże
 - expectedKinds wybierz tylko realne typy zamówień dla klienta`),
-          new HumanMessage(`Opis działalności/czego szukam: ${activity}\nEmail: ${email}`),
+          new HumanMessage(
+            `Opis działalności/czego szukam: ${activity}\nEmail: ${email}`,
+          ),
         ]);
 
         const parsed = JSON.parse(result.content as string) as {
@@ -536,7 +575,10 @@ Zasady:
           topicProfile = topicMatchingProfileSchema.parse(parsed.topicProfile);
         }
       } catch (err) {
-        this.logger.warn("Onboard LLM extraction failed, using defaults", (err as Error).message);
+        this.logger.warn(
+          "Onboard LLM extraction failed, using defaults",
+          (err as Error).message,
+        );
       }
     }
 
@@ -572,7 +614,9 @@ Zasady:
     // Queue embedding and matching
     await this.enqueueTopicEmbedding(topic.id);
 
-    this.logger.log(`Onboarded client: ${client.companyName} (${client.id}), topic: ${topic.title}`);
+    this.logger.log(
+      `Onboarded client: ${client.companyName} (${client.id}), topic: ${topic.title}`,
+    );
 
     return {
       client: this.serializeClient(client, 1),
@@ -615,7 +659,7 @@ Zasady:
     const llm = new ChatOpenAI({
       apiKey,
       model,
-      temperature: 0.3,
+      ...(model.startsWith("gpt-5") ? {} : { temperature: 0.3 }),
       modelKwargs: { response_format: { type: "json_object" } },
     });
 
@@ -639,7 +683,9 @@ Zasady:
 - exclude: typowe błędne sąsiednie branże lub fałszywe skojarzenia, 0-8 pozycji
 - expectedKinds: tylko realne typy zamówień
 - unikaj ogólników typu "obsługa", "usługa", "pracownicy", jeśli nie są istotą tematu`),
-      new HumanMessage(`${context ? context + "\n" : ""}Temat wyszukiwania: ${title}`),
+      new HumanMessage(
+        `${context ? context + "\n" : ""}Temat wyszukiwania: ${title}`,
+      ),
     ]);
 
     const parsed = JSON.parse(result.content as string) as {
@@ -666,12 +712,18 @@ Zasady:
       ? topicMatchingProfileSchema.parse({
           ...matchingProfile,
           exclude:
-            matchingProfile.exclude.length > 0 ? matchingProfile.exclude : negativeKeywords,
+            matchingProfile.exclude.length > 0
+              ? matchingProfile.exclude
+              : negativeKeywords,
         })
       : null;
 
-    const storedNegativeKeywords = profile?.exclude ?? [...new Set(negativeKeywords.map((v) => v.trim()).filter(Boolean))];
-    const storedPrompt = profile ? buildTopicPromptFromProfile(profile) : prompt.trim();
+    const storedNegativeKeywords = profile?.exclude ?? [
+      ...new Set(negativeKeywords.map((v) => v.trim()).filter(Boolean)),
+    ];
+    const storedPrompt = profile
+      ? buildTopicPromptFromProfile(profile)
+      : prompt.trim();
 
     return {
       prompt: storedPrompt,
@@ -721,7 +773,11 @@ Zasady:
         include: {
           _count: { select: { matches: true } },
           project: {
-            select: { name: true, clientId: true, client: { select: { companyName: true } } },
+            select: {
+              name: true,
+              clientId: true,
+              client: { select: { companyName: true } },
+            },
           },
         },
       }),
@@ -751,20 +807,34 @@ Zasady:
     const updated = await this.prisma.client.update({
       where: { id },
       data: {
-        ...(data.companyName !== undefined && { companyName: data.companyName }),
+        ...(data.companyName !== undefined && {
+          companyName: data.companyName,
+        }),
         ...(data.industry !== undefined && { industry: data.industry }),
-        ...(data.geographicScope !== undefined && { geographicScope: data.geographicScope }),
-        ...(data.geographicDetails !== undefined && { geographicDetails: data.geographicDetails }),
-        ...(data.budgetDescription !== undefined && { budgetDescription: data.budgetDescription }),
-        ...(data.contactPersonName !== undefined && { contactPersonName: data.contactPersonName }),
-        ...(data.contactPersonRole !== undefined && { contactPersonRole: data.contactPersonRole }),
+        ...(data.geographicScope !== undefined && {
+          geographicScope: data.geographicScope,
+        }),
+        ...(data.geographicDetails !== undefined && {
+          geographicDetails: data.geographicDetails,
+        }),
+        ...(data.budgetDescription !== undefined && {
+          budgetDescription: data.budgetDescription,
+        }),
+        ...(data.contactPersonName !== undefined && {
+          contactPersonName: data.contactPersonName,
+        }),
+        ...(data.contactPersonRole !== undefined && {
+          contactPersonRole: data.contactPersonRole,
+        }),
       },
     });
 
     this.logger.log(`Updated client: ${updated.companyName} (${updated.id})`);
     await this.enqueueMatching(updated.id);
 
-    const projectCount = await this.prisma.project.count({ where: { clientId: id } });
+    const projectCount = await this.prisma.project.count({
+      where: { clientId: id },
+    });
     return this.serializeClient(updated, projectCount);
   }
 }

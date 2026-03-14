@@ -56,13 +56,13 @@ export class AttachmentEnrichmentService {
   ) {}
 
   /**
-  * Pipeline wzbogacania kontekstu o treść najistotniejszych załączników tekstowych.
+   * Pipeline wzbogacania kontekstu o treść najistotniejszych załączników tekstowych.
    *
    * Kroki:
    *  1. Pobierz AnnouncementItem + Announcement.rawData
-  *  2. Wybierz najistotniejsze załączniki tekstowe (PDF/DOCX/TXT/HTML/...)
-  *  3. Pobierz każdy plik, wyciągnij tekst, skróć do budżetu znaków
-  *  4. Przekaż zebrany tekst do GPT-5 mini → krótkie podsumowanie
+   *  2. Wybierz najistotniejsze załączniki tekstowe (PDF/DOCX/TXT/HTML/...)
+   *  3. Pobierz każdy plik, wyciągnij tekst, skróć do budżetu znaków
+   *  4. Przekaż zebrany tekst do GPT-5 mini → krótkie podsumowanie
    *  5. Dopisz "| ZAŁĄCZNIKI: {summary}" do searchContext
    *  6. Wrzuć item ponownie do kolejki EMBED_ITEM (re-embedding z nowym kontekstem)
    */
@@ -95,7 +95,9 @@ export class AttachmentEnrichmentService {
 
     // ── 2. Wyciągnij załączniki ──────────────────────────────────────────────
     const rawData = item.announcement.rawData as Record<string, unknown>;
-    const allAttachments: RawAttachmentLike[] = Array.isArray(rawData.attachments)
+    const allAttachments: RawAttachmentLike[] = Array.isArray(
+      rawData.attachments,
+    )
       ? (rawData.attachments as RawAttachmentLike[])
       : [];
 
@@ -108,7 +110,9 @@ export class AttachmentEnrichmentService {
     });
 
     if (rankedAttachments.length === 0) {
-      this.logger.debug(`Item ${itemId} — no supported attachments, skipping enrichment`);
+      this.logger.debug(
+        `Item ${itemId} — no supported attachments, skipping enrichment`,
+      );
       return;
     }
 
@@ -119,7 +123,9 @@ export class AttachmentEnrichmentService {
     // ── 3. Pobierz i parsuj pliki ────────────────────────────────────────────
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) {
-      this.logger.warn("OPENAI_API_KEY not set — skipping attachment enrichment");
+      this.logger.warn(
+        "OPENAI_API_KEY not set — skipping attachment enrichment",
+      );
       return;
     }
 
@@ -135,7 +141,9 @@ export class AttachmentEnrichmentService {
     );
 
     if (extractedTexts.length === 0) {
-      this.logger.warn(`Item ${itemId} — all attachment downloads/parses failed`);
+      this.logger.warn(
+        `Item ${itemId} — all attachment downloads/parses failed`,
+      );
       return;
     }
 
@@ -189,7 +197,7 @@ export class AttachmentEnrichmentService {
       const chat = new ChatOpenAI({
         apiKey,
         model: chatModel,
-        temperature: 0,
+        ...(chatModel.startsWith("gpt-5") ? {} : { temperature: 0 }),
         maxTokens: MAX_SUMMARY_TOKENS,
       });
 

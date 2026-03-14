@@ -4,7 +4,10 @@ import { ChatOpenAI } from "@langchain/openai";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
 import type { SearchMode, SearchResultItem } from "@leadfinder/contracts";
-import { AppEmbeddings, hasValidEmbeddingConfig } from "../common/embeddings.js";
+import {
+  AppEmbeddings,
+  hasValidEmbeddingConfig,
+} from "../common/embeddings.js";
 
 interface RawSearchRow {
   id: string;
@@ -125,7 +128,9 @@ export class SearchService {
           },
     );
 
-    const sorted = [...defaultScored].sort((a, b) => b.score - a.score).slice(0, limit);
+    const sorted = [...defaultScored]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
 
     const resultItems = sorted.map((candidate) =>
       this.toResultItem(candidate, mode, expansionNotes),
@@ -159,18 +164,27 @@ export class SearchService {
       this.logger.warn(
         "Embedding provider is not configured — falling back to keyword-only search.",
       );
-      const keywordRows = await this.runKeywordSearch(effectiveQuery, candidateLimit);
+      const keywordRows = await this.runKeywordSearch(
+        effectiveQuery,
+        candidateLimit,
+      );
       const merged = this.mergeCandidateRows([], keywordRows);
       return merged.map((candidate) => ({
         ...candidate,
         score: candidate.keyword ?? 0,
-        explanations: ["Wyszukiwanie pełnotekstowe (brak skonfigurowanego providera embeddings — tryb awaryjny)."],
+        explanations: [
+          "Wyszukiwanie pełnotekstowe (brak skonfigurowanego providera embeddings — tryb awaryjny).",
+        ],
       }));
     }
 
     if (mode === "VECTOR") {
       const vectorStr = await this.embedQuery(effectiveQuery);
-      const vectorRows = await this.runVectorSearch(vectorStr, candidateLimit, threshold);
+      const vectorRows = await this.runVectorSearch(
+        vectorStr,
+        candidateLimit,
+        threshold,
+      );
       const candidates = this.mergeCandidateRows(vectorRows, []);
       return candidates.map((candidate) => ({
         ...candidate,
@@ -180,7 +194,11 @@ export class SearchService {
     }
 
     if (mode === "MULTI_VECTOR") {
-      return this.multiVectorCandidates(originalQuery, threshold, candidateLimit);
+      return this.multiVectorCandidates(
+        originalQuery,
+        threshold,
+        candidateLimit,
+      );
     }
 
     if (mode === "MULTI_STAGE") {
@@ -190,7 +208,10 @@ export class SearchService {
         candidateLimit * 2,
         Math.max(0.12, threshold * 0.7),
       );
-      const keywordRows = await this.runKeywordSearch(effectiveQuery, candidateLimit);
+      const keywordRows = await this.runKeywordSearch(
+        effectiveQuery,
+        candidateLimit,
+      );
       const merged = this.mergeCandidateRows(broadRows, keywordRows);
       return merged
         .sort((a, b) => (b.semantic ?? 0) - (a.semantic ?? 0))
@@ -198,8 +219,15 @@ export class SearchService {
     }
 
     const vectorStr = await this.embedQuery(effectiveQuery);
-    const vectorRows = await this.runVectorSearch(vectorStr, candidateLimit, threshold);
-    const keywordRows = await this.runKeywordSearch(effectiveQuery, candidateLimit);
+    const vectorRows = await this.runVectorSearch(
+      vectorStr,
+      candidateLimit,
+      threshold,
+    );
+    const keywordRows = await this.runKeywordSearch(
+      effectiveQuery,
+      candidateLimit,
+    );
     const merged = this.mergeCandidateRows(vectorRows, keywordRows);
 
     return merged.map((candidate) => ({
@@ -241,7 +269,11 @@ export class SearchService {
 
         const updatedSemantic = Math.max(current.semantic ?? 0, variantScore);
         const nextExplanations = [...current.explanations];
-        if (!nextExplanations.includes(`Dopasowanie wariantu zapytania: "${variant}"`)) {
+        if (
+          !nextExplanations.includes(
+            `Dopasowanie wariantu zapytania: "${variant}"`,
+          )
+        ) {
           nextExplanations.push(`Dopasowanie wariantu zapytania: "${variant}"`);
         }
 
@@ -437,7 +469,9 @@ export class SearchService {
       const hybrid = this.hybridScore(candidate.semantic, candidate.keyword);
 
       const finalScore =
-        rerankScore == null ? hybrid : this.clamp(hybrid * 0.45 + rerankScore * 0.55);
+        rerankScore == null
+          ? hybrid
+          : this.clamp(hybrid * 0.45 + rerankScore * 0.55);
 
       const explanations = [
         "Wynik po semantycznym rerankingu kandydatów przez model LLM.",
@@ -458,7 +492,9 @@ export class SearchService {
   private async applyFeedbackRanking(
     candidates: SearchCandidate[],
   ): Promise<SearchCandidate[]> {
-    const feedbackScores = await this.getFeedbackScores(candidates.map((c) => c.row.id));
+    const feedbackScores = await this.getFeedbackScores(
+      candidates.map((c) => c.row.id),
+    );
 
     return candidates.map((candidate) => {
       const hybrid = this.hybridScore(candidate.semantic, candidate.keyword);
@@ -484,7 +520,9 @@ export class SearchService {
       const domain = this.computeDomainScore(query, candidate.row);
       const semantic = candidate.semantic ?? 0;
       const keyword = candidate.keyword ?? 0;
-      const finalScore = this.clamp(semantic * 0.45 + keyword * 0.25 + domain.score * 0.3);
+      const finalScore = this.clamp(
+        semantic * 0.45 + keyword * 0.25 + domain.score * 0.3,
+      );
 
       return {
         ...candidate,
@@ -506,7 +544,9 @@ export class SearchService {
       const domain = this.computeDomainScore(query, candidate.row);
       const semantic = candidate.semantic ?? 0;
       const keyword = candidate.keyword ?? 0;
-      const finalScore = this.clamp(semantic * 0.5 + keyword * 0.25 + domain.score * 0.25);
+      const finalScore = this.clamp(
+        semantic * 0.5 + keyword * 0.25 + domain.score * 0.25,
+      );
 
       return {
         ...candidate,
@@ -520,7 +560,9 @@ export class SearchService {
     });
   }
 
-  private applyDiversification(candidates: SearchCandidate[]): SearchCandidate[] {
+  private applyDiversification(
+    candidates: SearchCandidate[],
+  ): SearchCandidate[] {
     const sorted = [...candidates]
       .map((candidate) => ({
         ...candidate,
@@ -539,9 +581,12 @@ export class SearchService {
 
       for (let i = 0; i < remaining.length; i += 1) {
         const candidate = remaining[i];
-        const sourcePenalty = (sourceCounts.get(candidate.row.source) ?? 0) * 0.08;
+        const sourcePenalty =
+          (sourceCounts.get(candidate.row.source) ?? 0) * 0.08;
         const announcementPenalty =
-          (announcementCounts.get(candidate.row.announcement_id) ?? 0) > 0 ? 0.35 : 0;
+          (announcementCounts.get(candidate.row.announcement_id) ?? 0) > 0
+            ? 0.35
+            : 0;
         const penalty = sourcePenalty + announcementPenalty;
         const diversifiedScore = candidate.score - penalty;
 
@@ -554,7 +599,9 @@ export class SearchService {
       const [picked] = remaining.splice(bestIndex, 1);
       const sourcePenalty = (sourceCounts.get(picked.row.source) ?? 0) * 0.08;
       const announcementPenalty =
-        (announcementCounts.get(picked.row.announcement_id) ?? 0) > 0 ? 0.35 : 0;
+        (announcementCounts.get(picked.row.announcement_id) ?? 0) > 0
+          ? 0.35
+          : 0;
       const penalty = sourcePenalty + announcementPenalty;
 
       selected.push({
@@ -566,7 +613,10 @@ export class SearchService {
         ],
       });
 
-      sourceCounts.set(picked.row.source, (sourceCounts.get(picked.row.source) ?? 0) + 1);
+      sourceCounts.set(
+        picked.row.source,
+        (sourceCounts.get(picked.row.source) ?? 0) + 1,
+      );
       announcementCounts.set(
         picked.row.announcement_id,
         (announcementCounts.get(picked.row.announcement_id) ?? 0) + 1,
@@ -595,7 +645,7 @@ export class SearchService {
       const response = await llm.invoke([
         [
           "system",
-          "Jesteś rerankerem ofert B2B. Zwróć WYŁĄCZNIE JSON: {\"ranked\":[{\"id\":\"...\",\"score\":0-1,\"reason\":\"krótki powód\"}]}",
+          'Jesteś rerankerem ofert B2B. Zwróć WYŁĄCZNIE JSON: {"ranked":[{"id":"...","score":0-1,"reason":"krótki powód"}]}',
         ],
         [
           "human",
@@ -603,9 +653,9 @@ export class SearchService {
         ],
       ]);
 
-      const parsed = this.parseJsonFromLLM<{ ranked?: Array<{ id?: string; score?: number; reason?: string }> }>(
-        String(response.content),
-      );
+      const parsed = this.parseJsonFromLLM<{
+        ranked?: Array<{ id?: string; score?: number; reason?: string }>;
+      }>(String(response.content));
       const map = new Map<string, RerankResult>();
 
       for (const row of parsed.ranked ?? []) {
@@ -616,7 +666,9 @@ export class SearchService {
 
       return map;
     } catch (error) {
-      this.logger.warn(`Rerank fallback: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Rerank fallback: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return new Map<string, RerankResult>();
     }
   }
@@ -629,13 +681,14 @@ export class SearchService {
       const response = await llm.invoke([
         [
           "system",
-          "Rozszerz zapytanie zakupowe. Zwróć WYŁĄCZNIE JSON: {\"expanded\":\"...\",\"terms\":[\"...\"]}",
+          'Rozszerz zapytanie zakupowe. Zwróć WYŁĄCZNIE JSON: {"expanded":"...","terms":["..."]}',
         ],
         ["human", query],
       ]);
-      const parsed = this.parseJsonFromLLM<{ expanded?: string; terms?: string[] }>(
-        String(response.content),
-      );
+      const parsed = this.parseJsonFromLLM<{
+        expanded?: string;
+        terms?: string[];
+      }>(String(response.content));
 
       const expanded = parsed.expanded?.trim();
       if (!expanded) return { effectiveQuery: query, notes: [] };
@@ -670,7 +723,9 @@ export class SearchService {
     }
   }
 
-  private async getFeedbackScores(itemIds: string[]): Promise<Map<string, number>> {
+  private async getFeedbackScores(
+    itemIds: string[],
+  ): Promise<Map<string, number>> {
     const rows = await this.prisma.clientMatch.findMany({
       where: { announcementId: { in: itemIds } },
       select: { announcementId: true, status: true },
@@ -712,19 +767,30 @@ export class SearchService {
     let score = 0;
 
     const tokens = this.tokenize(query);
-    const haystack = `${row.title} ${row.description ?? ""} ${row.announcement_title}`.toLowerCase();
+    const haystack =
+      `${row.title} ${row.description ?? ""} ${row.announcement_title}`.toLowerCase();
 
     if (tokens.length > 0) {
       const matched = tokens.filter((token) => haystack.includes(token)).length;
       const coverage = matched / tokens.length;
       if (coverage > 0) {
         score += coverage * 0.4;
-        reasons.push(`Pokrycie słów kluczowych: ${(coverage * 100).toFixed(0)}%.`);
+        reasons.push(
+          `Pokrycie słów kluczowych: ${(coverage * 100).toFixed(0)}%.`,
+        );
       }
     }
 
     const queryBudget = this.extractBudgetHints(query);
-    if (queryBudget && this.valueOverlaps(queryBudget.min, queryBudget.max, row.value_min, row.value_max)) {
+    if (
+      queryBudget &&
+      this.valueOverlaps(
+        queryBudget.min,
+        queryBudget.max,
+        row.value_min,
+        row.value_max,
+      )
+    ) {
       score += 0.3;
       reasons.push("Zgodność z zakładanym budżetem.");
     }
@@ -762,11 +828,19 @@ export class SearchService {
   }
 
   private tokenize(text: string): string[] {
-    return [...new Set(text.toLowerCase().match(/[a-ząćęłńóśźż0-9]{3,}/gi) ?? [])];
+    return [
+      ...new Set(text.toLowerCase().match(/[a-ząćęłńóśźż0-9]{3,}/gi) ?? []),
+    ];
   }
 
-  private extractBudgetHints(text: string): { min: number | null; max: number | null } | null {
-    const matches = [...text.toLowerCase().matchAll(/(\d+(?:[.,]\d+)?)\s*(k|tys|mln|m|zł|pln)?/g)];
+  private extractBudgetHints(
+    text: string,
+  ): { min: number | null; max: number | null } | null {
+    const matches = [
+      ...text
+        .toLowerCase()
+        .matchAll(/(\d+(?:[.,]\d+)?)\s*(k|tys|mln|m|zł|pln)?/g),
+    ];
     if (matches.length === 0) return null;
 
     const values = matches
@@ -781,7 +855,8 @@ export class SearchService {
       .filter((value): value is number => value != null);
 
     if (values.length === 0) return null;
-    if (values.length === 1) return { min: values[0] * 0.8, max: values[0] * 1.2 };
+    if (values.length === 1)
+      return { min: values[0] * 0.8, max: values[0] * 1.2 };
     return {
       min: Math.min(...values),
       max: Math.max(...values),
@@ -822,7 +897,9 @@ export class SearchService {
       valueMin: candidate.row.value_min,
       valueMax: candidate.row.value_max,
       url: candidate.row.url,
-      publishedAt: candidate.row.published_at ? candidate.row.published_at.toISOString() : null,
+      publishedAt: candidate.row.published_at
+        ? candidate.row.published_at.toISOString()
+        : null,
       similarity: candidate.semantic ?? 0,
       score: this.clamp(candidate.score),
       mode,
@@ -850,7 +927,9 @@ export class SearchService {
 
   private getEmbedder(): AppEmbeddings {
     if (!hasValidEmbeddingConfig(this.config)) {
-      throw new Error("Embedding provider is not configured — cannot perform vector search");
+      throw new Error(
+        "Embedding provider is not configured — cannot perform vector search",
+      );
     }
 
     return new AppEmbeddings(this.config);
@@ -863,7 +942,13 @@ export class SearchService {
     }
 
     const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
-    return new ChatOpenAI({ apiKey, model, temperature: 0 });
+    return new ChatOpenAI({
+      apiKey,
+      model,
+      ...(model.startsWith("gpt-5")
+        ? { reasoningEffort: "low" }
+        : { temperature: 0 }),
+    });
   }
 
   private toSafeNumber(value: unknown): number | null {

@@ -78,8 +78,17 @@ export class ClientPromptService implements OnModuleDestroy {
     sessionId: string | undefined,
     userMessage: string,
   ): Promise<
-    | { status: "question"; sessionId: string; question: string; collectedData: CollectedFields }
-    | { status: "created"; client: ReturnType<ClientsService["serializeClient"]>; matchCount: number }
+    | {
+        status: "question";
+        sessionId: string;
+        question: string;
+        collectedData: CollectedFields;
+      }
+    | {
+        status: "created";
+        client: ReturnType<ClientsService["serializeClient"]>;
+        matchCount: number;
+      }
   > {
     try {
       return await this._processMessage(sessionId, userMessage);
@@ -87,14 +96,21 @@ export class ClientPromptService implements OnModuleDestroy {
       const e = err as Error & { status?: number; statusCode?: number };
       const httpStatus = e?.status ?? e?.statusCode;
 
-      if (httpStatus === 429 || e?.message?.includes("exceeded your current quota") || e?.message?.includes("Rate limit")) {
+      if (
+        httpStatus === 429 ||
+        e?.message?.includes("exceeded your current quota") ||
+        e?.message?.includes("Rate limit")
+      ) {
         this.logger.warn("OpenAI quota/rate-limit exceeded", e.message);
         throw new ServiceUnavailableException(
           "Usługa AI jest chwilowo niedostępna (limit zapytań). Spróbuj za chwilę lub sprawdź konfigurację klucza API.",
         );
       }
 
-      this.logger.error("processMessage failed", e instanceof Error ? e.stack : String(e));
+      this.logger.error(
+        "processMessage failed",
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException("Błąd przetwarzania wiadomości.");
     }
   }
@@ -103,8 +119,17 @@ export class ClientPromptService implements OnModuleDestroy {
     sessionId: string | undefined,
     userMessage: string,
   ): Promise<
-    | { status: "question"; sessionId: string; question: string; collectedData: CollectedFields }
-    | { status: "created"; client: ReturnType<ClientsService["serializeClient"]>; matchCount: number }
+    | {
+        status: "question";
+        sessionId: string;
+        question: string;
+        collectedData: CollectedFields;
+      }
+    | {
+        status: "created";
+        client: ReturnType<ClientsService["serializeClient"]>;
+        matchCount: number;
+      }
   > {
     const sid = sessionId ?? crypto.randomUUID();
     const session = await this.loadSession(sid);
@@ -116,12 +141,17 @@ export class ClientPromptService implements OnModuleDestroy {
       this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
 
     const missingFields = this.getMissingFields(session.collected);
-    const systemPrompt = this.buildSystemPrompt(session.collected, missingFields);
+    const systemPrompt = this.buildSystemPrompt(
+      session.collected,
+      missingFields,
+    );
 
     const messages = [
       new SystemMessage(systemPrompt),
       ...session.history.map((m) =>
-        m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+        m.role === "user"
+          ? new HumanMessage(m.content)
+          : new AIMessage(m.content),
       ),
       new HumanMessage(userMessage),
     ];
@@ -129,7 +159,7 @@ export class ClientPromptService implements OnModuleDestroy {
     const llm = new ChatOpenAI({
       apiKey,
       model: chatModel,
-      temperature: 0,
+      ...(chatModel.startsWith("gpt-5") ? {} : { temperature: 0 }),
       modelKwargs: { response_format: { type: "json_object" } },
     });
 
@@ -164,18 +194,27 @@ export class ClientPromptService implements OnModuleDestroy {
     const isActuallyComplete = stillMissing.length === 0;
 
     // Save session
-    await this.saveSession(sid, { collected: updated, history: session.history });
+    await this.saveSession(sid, {
+      collected: updated,
+      history: session.history,
+    });
 
     if (isActuallyComplete) {
       // Validate that geographicDetails is present if needed
       const profile = updated as ClientProfileFields;
       if (
-        (profile.geographicScope === "REGIONAL" || profile.geographicScope === "LOCAL") &&
+        (profile.geographicScope === "REGIONAL" ||
+          profile.geographicScope === "LOCAL") &&
         !profile.geographicDetails
       ) {
         const question =
           "Podaj proszę szczegóły zasięgu geograficznego (np. 'województwo mazowieckie' lub 'Kraków + promień 50 km').";
-        return { status: "question", sessionId: sid, question, collectedData: updated };
+        return {
+          status: "question",
+          sessionId: sid,
+          question,
+          collectedData: updated,
+        };
       }
 
       // Delete session and create client
@@ -196,7 +235,10 @@ export class ClientPromptService implements OnModuleDestroy {
     return REQUIRED_FIELDS.filter((f) => !collected[f]);
   }
 
-  private buildSystemPrompt(collected: CollectedFields, missingFields: string[]): string {
+  private buildSystemPrompt(
+    collected: CollectedFields,
+    missingFields: string[],
+  ): string {
     const fieldLabels: Record<string, string> = {
       companyName: "Nazwa firmy",
       industry: "Branża/Specjalizacja",
@@ -271,7 +313,10 @@ Odpowiedz WYŁĄCZNIE w formacie JSON (bez markdown):
     }
   }
 
-  private async saveSession(sessionId: string, data: SessionData): Promise<void> {
+  private async saveSession(
+    sessionId: string,
+    data: SessionData,
+  ): Promise<void> {
     const key = `${SESSION_PREFIX}${sessionId}`;
     await this.redis.set(key, JSON.stringify(data), "EX", SESSION_TTL_SEC);
   }
