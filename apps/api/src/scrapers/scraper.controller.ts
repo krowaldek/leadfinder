@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  NotFoundException,
   Param,
   Post,
   UseGuards,
@@ -17,8 +18,7 @@ import { Roles } from "../common/roles.decorator.js";
 import { SystemRole } from "@prisma/client";
 import { SCRAPER_QUEUE, ScraperJob } from "./scraper-queue.constants.js";
 import { ScraperScheduleService } from "./scraper-queue.module.js";
-import { EzScraperService } from "./ez/ez.scraper.service.js";
-import { PzScraperService } from "./pz/pz.scraper.service.js";
+
 import { EmbeddingService } from "../embedding/embedding.service.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { z } from "zod";
@@ -43,10 +43,6 @@ export class ScraperController {
     private readonly queue: Queue,
     @Inject(ScraperScheduleService)
     private readonly scheduleService: ScraperScheduleService,
-    @Inject(EzScraperService)
-    private readonly ezScraper: EzScraperService,
-    @Inject(PzScraperService)
-    private readonly pzScraper: PzScraperService,
     @Inject(EmbeddingService)
     private readonly embeddingService: EmbeddingService,
     @Inject(PrismaService)
@@ -101,9 +97,8 @@ export class ScraperController {
     return { jobId: job.id, status: "queued" };
   }
 
-  /** Get queue status: counts + last 5 completed / failed jobs */
-  @Get("bk/queue-status")
-
+  /** Get scraper queue status: counts + last 5 completed / failed jobs */
+  @Get("queue-status")
   async queueStatus() {
     const [waiting, active, completed, failed, delayed, repeatableJobs] =
       await Promise.all([
@@ -134,7 +129,10 @@ export class ScraperController {
   @Get("jobs/:jobId")
   async jobStatus(@Param("jobId") jobId: string) {
     const job = await this.queue.getJob(jobId);
-    if (!job) return { error: "Job not found" };
+    if (!job) {
+      throw new NotFoundException("Job not found");
+    }
+
     const state = await job.getState();
     return { ...formatJob(job), state };
   }
@@ -152,9 +150,9 @@ export class ScraperController {
   /**
    * Backfill: kolejkuje embedding dla wszystkich ogłoszeń bez embeddingu.
    */
-  @Post("embedding/backfill-kind")
+  @Post("embedding/backfill")
   @HttpCode(HttpStatus.ACCEPTED)
-  async backfillKind() {
+  async backfillEmbeddings() {
     const queued = await this.embeddingService.backfillAnnouncements();
     return { queued, status: "queued" };
   }
@@ -182,7 +180,9 @@ function formatJob(job: Job) {
     id: job.id,
     name: job.name,
     addedAt: job.timestamp ? new Date(job.timestamp).toISOString() : null,
-    processedAt: job.processedOn ? new Date(job.processedOn).toISOString() : null,
+    processedAt: job.processedOn
+      ? new Date(job.processedOn).toISOString()
+      : null,
     finishedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
     failedReason: job.failedReason ?? null,
   };
