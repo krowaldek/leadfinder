@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type JobLogType = "SCRAPER" | "EMBEDDING" | "REPORT";
+export type JobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT";
 export type JobLogStatus = "STARTED" | "COMPLETED" | "FAILED";
 
 export interface JobLog {
@@ -47,6 +47,7 @@ export interface TypeStats {
 export interface LogsStats {
   scraper: TypeStats;
   embedding: TypeStats;
+  matching: TypeStats;
   report: TypeStats;
 }
 
@@ -75,10 +76,38 @@ export interface ReembedProgress {
   bySource: ReembedSourceProgress[];
 }
 
+export interface QueueJobPreview {
+  id: string;
+  name: string;
+  state: "waiting" | "active" | "delayed";
+  attemptsMade: number;
+  createdAt: number;
+  delay: number;
+  data: Record<string, unknown> | null;
+}
+
+export interface QueueDetails {
+  key: string;
+  label: string;
+  counts: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  };
+  pending: QueueJobPreview[];
+}
+
+export interface QueuesOverview {
+  generatedAt: string;
+  queues: QueueDetails[];
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────────
 
 async function fetchLogs(
-  type: "scraper" | "embedding" | "reports",
+  type: "scraper" | "embedding" | "matching" | "reports",
   params: { page?: number; limit?: number; status?: JobLogStatus; jobName?: string },
 ): Promise<LogsResponse> {
   const query = new URLSearchParams();
@@ -97,6 +126,11 @@ async function fetchStats(): Promise<LogsStats> {
 
 async function fetchReembedProgress(): Promise<ReembedProgress> {
   const res = await api.get<ReembedProgress>("/logs/reembed-progress");
+  return res.data;
+}
+
+async function fetchQueuesOverview(): Promise<QueuesOverview> {
+  const res = await api.get<QueuesOverview>("/logs/queues");
   return res.data;
 }
 
@@ -137,6 +171,15 @@ export function useReportLogs(opts: UseLogsOptions = {}) {
   });
 }
 
+export function useMatchingLogs(opts: UseLogsOptions = {}) {
+  const { page = 1, limit = 50, status, refetchInterval = 10_000 } = opts;
+  return useQuery<LogsResponse>({
+    queryKey: ["logs", "matching", { page, limit, status }],
+    queryFn: () => fetchLogs("matching", { page, limit, status }),
+    refetchInterval,
+  });
+}
+
 export function useLogsStats(refetchInterval = 15_000) {
   return useQuery<LogsStats>({
     queryKey: ["logs", "stats"],
@@ -149,6 +192,14 @@ export function useReembedProgress(refetchInterval = 15_000) {
   return useQuery<ReembedProgress>({
     queryKey: ["logs", "reembed-progress"],
     queryFn: fetchReembedProgress,
+    refetchInterval,
+  });
+}
+
+export function useQueuesOverview(refetchInterval = 15_000) {
+  return useQuery<QueuesOverview>({
+    queryKey: ["logs", "queues"],
+    queryFn: fetchQueuesOverview,
     refetchInterval,
   });
 }

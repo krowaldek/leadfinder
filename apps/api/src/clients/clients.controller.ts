@@ -143,8 +143,14 @@ export class ClientsController {
   @Post(":id/rematch")
   async rematch(@Param("id") id: string) {
     await this.clientsService.findOne(id);
-    await this.clientsService.enqueueMatching(id);
-    return { message: "Rematch initiated", clientId: id };
+    const result = await this.clientsService.enqueueMatching(id);
+    return {
+      message: result.topicEmbeddingsQueued > 0
+        ? "Rematch initiated and missing topic embeddings queued"
+        : "Rematch initiated",
+      clientId: id,
+      ...result,
+    };
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -10,6 +10,7 @@ import {
   type AttachmentCacheAdapter,
   type RawAttachmentLike,
 } from "../common/attachment-text.js";
+import { buildAiOperationLog } from "../common/ai-usage.js";
 import { JobLoggerService } from "../logs/job-logger.service.js";
 
 const MAX_CHARS_PER_FILE = 7_000;
@@ -360,6 +361,17 @@ export class AnnouncementReportService {
     this.logger.log(`Report generated for announcement ${announcementId} (${report.length} chars)`);
 
     if (logId) {
+      const aiOperations = [
+        buildAiOperationLog({
+          name: "announcement-report",
+          provider: "OPENAI",
+          model: chatModel,
+          ...(promptTokens || completionTokens
+            ? { promptTokens, completionTokens, totalTokens }
+            : {}),
+        }),
+      ];
+
       await this.jobLogger.finish({
         logId,
         status: "COMPLETED",
@@ -369,8 +381,16 @@ export class AnnouncementReportService {
           reportLength: report.length,
           attachmentsProcessed: attachmentTexts.length,
           llmUsed,
+          aiOperations,
           ...(llmFailureReason ? { llmFailureReason } : {}),
-          ...(promptTokens || completionTokens ? { promptTokens, completionTokens, totalTokens } : {}),
+          ...(promptTokens || completionTokens
+            ? {
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                estimatedCostUsd: aiOperations[0]?.estimatedCostUsd ?? null,
+              }
+            : {}),
         },
       });
     }

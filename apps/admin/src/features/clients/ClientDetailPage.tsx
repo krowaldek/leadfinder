@@ -956,7 +956,16 @@ export function ClientDetailPage() {
 
   const rematchMutation = useMutation({
     mutationFn: () => rematchClient(clientId),
-    onSuccess: () => toast.success("Przeliczanie dopasowań zakolejkowane (wszystkie tematy)"),
+    onSuccess: (result) => {
+      if (result.topicEmbeddingsQueued > 0) {
+        toast.success(
+          `Zakolejkowano ${result.topicEmbeddingsQueued} embedding${result.topicEmbeddingsQueued === 1 ? "" : "i"} tematów. Dopasowania pojawią się po ich przeliczeniu.`,
+        );
+        return;
+      }
+
+      toast.success("Przeliczanie dopasowań zakolejkowane (wszystkie tematy)");
+    },
     onError: () => toast.error("Nie udało się zakolejkować przeliczania"),
   });
 

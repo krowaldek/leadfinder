@@ -375,18 +375,55 @@ export class ClientsService {
     this.logger.log(`Queued embedding for topic: ${topicId}`);
   }
 
-  async enqueueMatching(clientId: string): Promise<void> {
-    await this.matchingQueue.add(
-      ClientMatchingJob.MATCH_CLIENT,
-      { clientId },
-      {
-        jobId: `client-match-${clientId}-${Date.now()}`,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5_000 },
-        removeOnComplete: { count: 20 },
-        removeOnFail: { count: 10 },
+  async enqueueMatching(clientId: string): Promise<{
+    matchingQueued: boolean;
+    topicEmbeddingsQueued: number;
+    embeddedTopics: number;
+    pendingTopics: number;
+  }> {
+    const topics = await this.prisma.topic.findMany({
+      where: {
+        project: { clientId },
       },
+      select: {
+        id: true,
+        embeddingStatus: true,
+      },
+    });
+
+    const embeddedTopics = topics.filter((topic) => topic.embeddingStatus === "EMBEDDED");
+    const topicsNeedingEmbedding = topics.filter(
+      (topic) => topic.embeddingStatus !== "EMBEDDED",
     );
+
+    for (const topic of topicsNeedingEmbedding) {
+      await this.enqueueTopicEmbedding(topic.id);
+    }
+
+    if (embeddedTopics.length > 0) {
+      await this.matchingQueue.add(
+        ClientMatchingJob.MATCH_CLIENT,
+        { clientId },
+        {
+          jobId: `client-match-${clientId}-${Date.now()}`,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 5_000 },
+          removeOnComplete: { count: 20 },
+          removeOnFail: { count: 10 },
+        },
+      );
+    }
+
+    this.logger.log(
+      `Queued rematch for client ${clientId}: embeddedTopics=${embeddedTopics.length}, topicEmbeddingsQueued=${topicsNeedingEmbedding.length}`,
+    );
+
+    return {
+      matchingQueued: embeddedTopics.length > 0,
+      topicEmbeddingsQueued: topicsNeedingEmbedding.length,
+      embeddedTopics: embeddedTopics.length,
+      pendingTopics: topicsNeedingEmbedding.length,
+    };
   }
 
   async backfillClients(options?: { status?: "ACTIVE" | "INACTIVE" }): Promise<{

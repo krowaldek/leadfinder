@@ -45,7 +45,14 @@ export async function sendPromptMessage(
 
 export async function rematchClient(clientId: string) {
   const response = await api.post(`/clients/${clientId}/rematch`, {});
-  return response.data as { queued: true };
+  return response.data as {
+    clientId: string;
+    message: string;
+    matchingQueued: boolean;
+    topicEmbeddingsQueued: number;
+    embeddedTopics: number;
+    pendingTopics: number;
+  };
 }
 
 export async function updateClient(clientId: string, data: UpdateClient) {

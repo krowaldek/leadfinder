@@ -130,8 +130,14 @@ export function ClientMatchesPage() {
 
   const rematchMutation = useMutation({
     mutationFn: (clientId: string) => rematchClient(clientId),
-    onSuccess: (_, clientId) => {
-      toast.success("Przeliczenie dopasowań zakolejkowane");
+    onSuccess: (result, clientId) => {
+      if (result.topicEmbeddingsQueued > 0) {
+        toast.success(
+          `Zakolejkowano ${result.topicEmbeddingsQueued} embedding${result.topicEmbeddingsQueued === 1 ? "" : "i"} tematów. Dopasowania pojawią się po ich przeliczeniu.`,
+        );
+      } else {
+        toast.success("Przeliczenie dopasowań zakolejkowane");
+      }
       void queryClient.invalidateQueries({ queryKey: ["client-matches", clientId] });
     },
     onError: () => toast.error("Nie udało się zakolejkować przeliczenia dopasowań"),

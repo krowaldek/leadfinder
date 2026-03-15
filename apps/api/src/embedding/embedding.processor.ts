@@ -1,11 +1,15 @@
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Job } from "bullmq";
 import { EmbeddingService } from "./embedding.service.js";
 import { EMBEDDING_QUEUE, EmbeddingJob } from "./embedding-queue.constants.js";
 import { JobLoggerService } from "../logs/job-logger.service.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { ClientMatchingService } from "../clients/client-matching.service.js";
+import type { AppEnv } from "../config/env.js";
+import { buildAiOperationLog } from "../common/ai-usage.js";
+import { getEmbeddingModel, getEmbeddingProvider } from "../common/embeddings.js";
 
 interface EmbedAnnouncementPayload {
   announcementId: string;
@@ -33,6 +37,8 @@ export class EmbeddingProcessor extends WorkerHost {
     private readonly jobLogger: JobLoggerService,
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
+    @Inject(ConfigService)
+    private readonly config: ConfigService<AppEnv>,
   ) {
     super();
   }
@@ -69,6 +75,29 @@ export class EmbeddingProcessor extends WorkerHost {
 
       try {
         const { tokenUsage } = await this.embeddingService.generateAnnouncementEmbedding(announcementId);
+        const embeddingProvider = getEmbeddingProvider(this.config);
+        const embeddingModel = getEmbeddingModel(this.config);
+        const analysisModel =
+          this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+        const aiOperations = [
+          buildAiOperationLog({
+            name: "announcement-embedding",
+            provider: embeddingProvider,
+            model: embeddingModel,
+          }),
+          ...(tokenUsage
+            ? [
+                buildAiOperationLog({
+                  name: "announcement-analysis",
+                  provider: "OPENAI",
+                  model: analysisModel,
+                  promptTokens: tokenUsage.promptTokens,
+                  completionTokens: tokenUsage.completionTokens,
+                  totalTokens: tokenUsage.totalTokens,
+                }),
+              ]
+            : []),
+        ];
 
         const updated = await this.prisma.announcement.findUnique({
           where: { id: announcementId },
@@ -85,10 +114,14 @@ export class EmbeddingProcessor extends WorkerHost {
             announcementId,
             kind: updated?.kind ?? null,
             reportLength: updated?.detailedReport?.length ?? null,
+            embeddingProvider,
+            embeddingModel,
+            aiOperations,
             ...(tokenUsage ? {
               promptTokens: tokenUsage.promptTokens,
               completionTokens: tokenUsage.completionTokens,
               totalTokens: tokenUsage.totalTokens,
+              estimatedCostUsd: aiOperations[1]?.estimatedCostUsd ?? null,
             } : {}),
           },
         });
@@ -126,11 +159,24 @@ export class EmbeddingProcessor extends WorkerHost {
       try {
         await this.embeddingService.generateTopicEmbedding(topicId);
         await this.matchingService.matchTopic(topicId);
+        const embeddingProvider = getEmbeddingProvider(this.config);
+        const embeddingModel = getEmbeddingModel(this.config);
 
         await this.jobLogger.finish({
           logId,
           status: "COMPLETED",
-          result: { topicId },
+          result: {
+            topicId,
+            embeddingProvider,
+            embeddingModel,
+            aiOperations: [
+              buildAiOperationLog({
+                name: "topic-embedding",
+                provider: embeddingProvider,
+                model: embeddingModel,
+              }),
+            ],
+          },
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

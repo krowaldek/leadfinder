@@ -47,6 +47,15 @@ export class LogsController {
     return this.logsService.findByType("REPORT", { page, limit, status });
   }
 
+  @Get("matching")
+  async matchingLogs(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("limit", new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query("status") status?: JobLogStatus,
+  ) {
+    return this.logsService.findByType("MATCHING", { page, limit, status });
+  }
+
   @Get("stats")
   async stats() {
     return this.logsService.getStats();
@@ -60,5 +69,10 @@ export class LogsController {
   @Get("token-stats")
   async tokenStats() {
     return this.logsService.getTokenStats();
+  }
+
+  @Get("queues")
+  async queues() {
+    return this.logsService.getQueuesOverview();
   }
 }

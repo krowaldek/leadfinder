@@ -11,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
   Timer,
+  Users,
   Zap,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,11 +37,14 @@ import {
 import {
   useScraperLogs,
   useEmbeddingLogs,
+  useMatchingLogs,
   useReportLogs,
   useLogsStats,
   useReembedProgress,
+  useQueuesOverview,
   type JobLog,
   type JobLogStatus,
+  type QueueDetails,
   type ReembedProgress,
   type TypeStats,
 } from "./logs-api";
@@ -59,6 +63,107 @@ function formatDuration(ms: number | null | undefined): string {
   const mins = Math.floor(ms / 60_000);
   const secs = Math.round((ms % 60_000) / 1000);
   return `${mins}m ${secs}s`;
+}
+
+function formatUsd(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return value < 0.001 ? "$<0.001" : `$${value.toFixed(3)}`;
+}
+
+type AiOperation = {
+  name: string;
+  provider: string;
+  model: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+};
+
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseAiOperations(log: JobLog): AiOperation[] {
+  const result = log.result as Record<string, unknown> | null;
+  const rawOperations = Array.isArray(result?.aiOperations)
+    ? result.aiOperations
+    : [];
+
+  const operations = rawOperations
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const operation = entry as Record<string, unknown>;
+
+      return {
+        name: typeof operation.name === "string" ? operation.name : "ai-operation",
+        provider: typeof operation.provider === "string" ? operation.provider : "—",
+        model: typeof operation.model === "string" ? operation.model : "—",
+        promptTokens: toNumberOrNull(operation.promptTokens),
+        completionTokens: toNumberOrNull(operation.completionTokens),
+        totalTokens: toNumberOrNull(operation.totalTokens),
+        estimatedCostUsd: toNumberOrNull(operation.estimatedCostUsd),
+      } satisfies AiOperation;
+    })
+    .filter((entry): entry is AiOperation => entry != null);
+
+  if (operations.length > 0) {
+    return operations;
+  }
+
+  const totalTokens = toNumberOrNull(result?.totalTokens);
+  const promptTokens = toNumberOrNull(result?.promptTokens);
+  const completionTokens = toNumberOrNull(result?.completionTokens);
+
+  if (totalTokens == null && promptTokens == null && completionTokens == null) {
+    return [];
+  }
+
+  return [
+    {
+      name: "legacy-ai",
+      provider: typeof result?.aiProvider === "string" ? result.aiProvider : "OPENAI",
+      model: typeof result?.aiModel === "string" ? result.aiModel : "—",
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      estimatedCostUsd: toNumberOrNull(result?.estimatedCostUsd),
+    },
+  ];
+}
+
+function AiUsageCell({ log }: { log: JobLog }) {
+  const operations = parseAiOperations(log);
+
+  if (operations.length === 0) {
+    return <span className="text-muted-foreground text-xs">—</span>;
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      {operations.map((operation, index) => (
+        <div key={`${log.id}-${operation.name}-${index}`} className="rounded-md border bg-muted/30 px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">{operation.name}</span>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {operation.provider} · {operation.model}
+            </Badge>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground font-mono">
+            {operation.promptTokens != null && <span>in: {operation.promptTokens.toLocaleString("pl-PL")}</span>}
+            {operation.completionTokens != null && <span>out: {operation.completionTokens.toLocaleString("pl-PL")}</span>}
+            {operation.totalTokens != null && <span>sum: {operation.totalTokens.toLocaleString("pl-PL")}</span>}
+            <span>cost: {formatUsd(operation.estimatedCostUsd)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function StatusBadge({ status }: { status: JobLogStatus }) {
@@ -100,6 +205,8 @@ function StatsCard({
       ? "text-violet-500"
       : title === "Embeddingi"
         ? "text-blue-500"
+        : title === "Dopasowania"
+          ? "text-emerald-500"
         : "text-amber-500";
 
   return (
@@ -298,6 +405,87 @@ function ReembedProgressCard({
   );
 }
 
+function queueStateBadgeClass(state: "waiting" | "active" | "delayed"): string {
+  if (state === "active") return "bg-blue-500/15 text-blue-600 dark:text-blue-400";
+  if (state === "delayed") return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
+  return "bg-violet-500/15 text-violet-600 dark:text-violet-400";
+}
+
+function QueuesCard({
+  queues,
+  isLoading,
+}: {
+  queues: QueueDetails[] | undefined;
+  isLoading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <Database className="size-4 text-violet-500" />
+          Kolejki zadań
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin inline mr-2" />
+            Ładowanie kolejek…
+          </div>
+        ) : !queues || queues.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Brak danych o kolejkach.</p>
+        ) : (
+          queues.map((queue) => (
+            <div key={queue.key} className="rounded-md border p-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-sm">{queue.label}</p>
+                  <p className="text-xs text-muted-foreground">{queue.key}</p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs font-mono">
+                  <span className="rounded bg-muted px-2 py-1">waiting: {queue.counts.waiting}</span>
+                  <span className="rounded bg-muted px-2 py-1">active: {queue.counts.active}</span>
+                  <span className="rounded bg-muted px-2 py-1">failed: {queue.counts.failed}</span>
+                </div>
+              </div>
+
+              {queue.pending.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nic nie oczekuje w tej kolejce.</p>
+              ) : (
+                <div className="space-y-2">
+                  {queue.pending.map((job) => (
+                    <div key={`${queue.key}-${job.id}-${job.state}`} className="rounded-md bg-muted/30 px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{job.name}</p>
+                          <p className="font-mono text-[10px] text-muted-foreground truncate">{job.id}</p>
+                        </div>
+                        <Badge className={`border-0 ${queueStateBadgeClass(job.state)}`}>
+                          {job.state}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground font-mono">
+                        <span>attempts: {job.attemptsMade}</span>
+                        <span>{formatDistanceToNow(new Date(job.createdAt), { addSuffix: true, locale: pl })}</span>
+                        {job.delay > 0 && <span>delay: {formatDuration(job.delay)}</span>}
+                      </div>
+                      {job.data && (
+                        <pre className="mt-2 overflow-x-auto rounded bg-background/80 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                          {JSON.stringify(job.data, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Scraper Logs Table ────────────────────────────────────────────────────────
 
 function ScraperLogsTable({
@@ -419,20 +607,21 @@ function EmbeddingLogsTable({
             <TableHead className="w-[90px]">Czas trwania</TableHead>
             <TableHead>Element</TableHead>
             <TableHead className="w-[100px]">Kind</TableHead>
+            <TableHead className="min-w-[280px]">AI / koszt</TableHead>
             <TableHead className="max-w-[300px]">Błąd</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin inline mr-2" />
                 Ładowanie…
               </TableCell>
             </TableRow>
           ) : logs.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                 Brak logów embeddingów
               </TableCell>
             </TableRow>
@@ -482,6 +671,9 @@ function EmbeddingLogsTable({
                       <span className="text-muted-foreground text-xs">—</span>
                     )}
                   </TableCell>
+                  <TableCell className="min-w-[280px] align-top">
+                    <AiUsageCell log={log} />
+                  </TableCell>
                   <TableCell className="max-w-[300px]">
                     {log.error ? (
                       <span className="text-xs text-red-600 dark:text-red-400 font-mono break-all line-clamp-3" title={log.error}>
@@ -523,6 +715,7 @@ function ReportLogsTable({
             <TableHead className="w-[100px]">Dł. raportu</TableHead>
             <TableHead className="w-[80px]">Pozycje</TableHead>
             <TableHead className="w-[80px]">Załączniki</TableHead>
+            <TableHead className="min-w-[280px]">AI / koszt</TableHead>
             <TableHead>Detale</TableHead>
             <TableHead className="max-w-[300px]">Błąd</TableHead>
           </TableRow>
@@ -530,14 +723,14 @@ function ReportLogsTable({
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
                 <Loader2 className="size-4 animate-spin inline mr-2" />
                 Ładowanie…
               </TableCell>
             </TableRow>
           ) : logs.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+              <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
                 Brak logów raportów
               </TableCell>
             </TableRow>
@@ -593,6 +786,9 @@ function ReportLogsTable({
                       ? String(result.attachmentsProcessed)
                       : "—"}
                   </TableCell>
+                  <TableCell className="min-w-[280px] align-top">
+                    <AiUsageCell log={log} />
+                  </TableCell>
                   <TableCell className="text-xs max-w-[360px]">
                     <div className="space-y-1">
                       {result?.kind != null && (
@@ -621,6 +817,106 @@ function ReportLogsTable({
                         <span className="text-muted-foreground">—</span>
                       )}
                     </div>
+                  </TableCell>
+                  <TableCell className="max-w-[300px]">
+                    {log.error ? (
+                      <span className="text-xs text-red-600 dark:text-red-400 font-mono break-all line-clamp-3" title={log.error}>
+                        {log.error}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function MatchingLogsTable({
+  logs,
+  isLoading,
+}: {
+  logs: JobLog[];
+  isLoading: boolean;
+}) {
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[180px]">Czas startu</TableHead>
+            <TableHead className="w-[140px]">Job</TableHead>
+            <TableHead className="w-[100px]">Status</TableHead>
+            <TableHead className="w-[90px]">Czas trwania</TableHead>
+            <TableHead>Klient</TableHead>
+            <TableHead className="w-[110px]">Projekty</TableHead>
+            <TableHead className="w-[120px]">Dopasowania</TableHead>
+            <TableHead className="max-w-[300px]">Błąd</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableRow>
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                <Loader2 className="size-4 animate-spin inline mr-2" />
+                Ładowanie…
+              </TableCell>
+            </TableRow>
+          ) : logs.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                Brak logów dopasowań
+              </TableCell>
+            </TableRow>
+          ) : (
+            logs.map((log) => {
+              const payload = log.payload as Record<string, unknown> | null;
+              const result = log.result as Record<string, unknown> | null;
+              const projectCount = result?.projectCount ?? payload?.projectCount;
+              const matchedAnnouncements = result?.matchedAnnouncements;
+
+              return (
+                <TableRow key={log.id}>
+                  <TableCell className="font-mono text-xs whitespace-nowrap">
+                    {formatDate(log.startedAt)}
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{log.jobName}</code>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={log.status} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums">
+                    {formatDuration(log.durationMs)}
+                  </TableCell>
+                  <TableCell className="text-xs max-w-[280px]">
+                    {log.entityTitle ? (
+                      <div className="space-y-0.5">
+                        <p className="truncate font-medium" title={log.entityTitle}>
+                          {log.entityTitle}
+                        </p>
+                        {log.entityId && (
+                          <p className="font-mono text-[10px] text-muted-foreground truncate">
+                            {log.entityId}
+                          </p>
+                        )}
+                      </div>
+                    ) : log.entityId ? (
+                      <code className="text-[10px] text-muted-foreground">{log.entityId}</code>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums text-center">
+                    {projectCount != null ? String(projectCount) : "—"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums text-center">
+                    {matchedAnnouncements != null ? String(matchedAnnouncements) : "—"}
                   </TableCell>
                   <TableCell className="max-w-[300px]">
                     {log.error ? (
@@ -748,6 +1044,7 @@ function FilterBar({
 export function LogsPage() {
   const { data: stats, isLoading: statsLoading } = useLogsStats();
   const { data: reembedProgress, isLoading: reembedLoading } = useReembedProgress();
+  const { data: queuesOverview, isLoading: queuesLoading } = useQueuesOverview();
 
   // Scraper state
   const [scraperPage, setScraperPage] = useState(1);
@@ -769,6 +1066,15 @@ export function LogsPage() {
     status: embedStatus,
   });
 
+  // Matching state
+  const [matchingPage, setMatchingPage] = useState(1);
+  const [matchingStatus, setMatchingStatus] = useState<JobLogStatus | undefined>();
+  const { data: matchingData, isLoading: matchingLoading, refetch: refetchMatching } = useMatchingLogs({
+    page: matchingPage,
+    limit: 50,
+    status: matchingStatus,
+  });
+
   // Report state
   const [reportPage, setReportPage] = useState(1);
   const [reportStatus, setReportStatus] = useState<JobLogStatus | undefined>();
@@ -783,13 +1089,13 @@ export function LogsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Logi systemowe</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Historia operacji scrapowania, embeddingów i generowania raportów.
+          Historia operacji scrapowania, embeddingów, dopasowań i generowania raportów.
           Dane odświeżane automatycznie co 10 sekund.
         </p>
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatsCard
           title="Scrapowanie"
           icon={Database}
@@ -799,6 +1105,11 @@ export function LogsPage() {
           title="Embeddingi"
           icon={Zap}
           stats={statsLoading ? undefined : stats?.embedding}
+        />
+        <StatsCard
+          title="Dopasowania"
+          icon={Users}
+          stats={statsLoading ? undefined : stats?.matching}
         />
         <StatsCard
           title="Raporty"
@@ -811,6 +1122,8 @@ export function LogsPage() {
         progress={reembedProgress}
         isLoading={reembedLoading}
       />
+
+      <QueuesCard queues={queuesOverview?.queues} isLoading={queuesLoading} />
 
       {/* Tabs */}
       <Tabs defaultValue="scraper" className="space-y-4">
@@ -830,6 +1143,15 @@ export function LogsPage() {
             {stats && (
               <span className="ml-1 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 px-1.5 py-0 text-[10px] font-bold tabular-nums">
                 {stats.embedding.total}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="matching" className="gap-2">
+            <Users className="size-3.5" />
+            Dopasowania
+            {stats && (
+              <span className="ml-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0 text-[10px] font-bold tabular-nums">
+                {stats.matching.total}
               </span>
             )}
           </TabsTrigger>
@@ -907,6 +1229,31 @@ export function LogsPage() {
               total={embedData?.meta.total ?? 0}
               limit={50}
               onPageChange={setEmbedPage}
+            />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="matching">
+          <div className="space-y-2">
+            <FilterBar
+              status={matchingStatus}
+              onStatusChange={(s) => { setMatchingStatus(s); setMatchingPage(1); }}
+              total={matchingData?.meta.total}
+              onRefresh={() => void refetchMatching()}
+              isLoading={matchingLoading}
+            />
+            <ScrollArea className="w-full">
+              <MatchingLogsTable
+                logs={matchingData?.data ?? []}
+                isLoading={matchingLoading}
+              />
+            </ScrollArea>
+            <Pagination
+              page={matchingPage}
+              pages={matchingData?.meta.pages ?? 1}
+              total={matchingData?.meta.total ?? 0}
+              limit={50}
+              onPageChange={setMatchingPage}
             />
           </div>
         </TabsContent>

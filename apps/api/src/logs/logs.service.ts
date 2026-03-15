@@ -1,9 +1,13 @@
 import { Injectable, Inject } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { JobLogStatus, JobLogType } from "@prisma/client";
-import { Queue } from "bullmq";
+import { Job, Queue } from "bullmq";
 import { PrismaService } from "../database/prisma.service.js";
+import { CLIENT_MATCHING_QUEUE } from "../clients/client-matching.constants.js";
 import { EMBEDDING_QUEUE } from "../embedding/embedding-queue.constants.js";
+import { SCRAPER_QUEUE } from "../scrapers/scraper-queue.constants.js";
+
+type SupportedJobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT";
 
 export interface LogsQuery {
   page?: number;
@@ -42,6 +46,7 @@ export interface LogEntry {
 export interface LogsStats {
   scraper: TypeStats;
   embedding: TypeStats;
+  matching: TypeStats;
   report: TypeStats;
 }
 
@@ -94,6 +99,34 @@ export interface TokenStats {
   byType: Record<string, TokenTypeStats>;
 }
 
+export interface QueueJobPreview {
+  id: string;
+  name: string;
+  state: "waiting" | "active" | "delayed";
+  attemptsMade: number;
+  createdAt: number;
+  delay: number;
+  data: Record<string, unknown> | null;
+}
+
+export interface QueueDetails {
+  key: string;
+  label: string;
+  counts: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+  };
+  pending: QueueJobPreview[];
+}
+
+export interface QueuesOverview {
+  generatedAt: string;
+  queues: QueueDetails[];
+}
+
 @Injectable()
 export class LogsService {
   constructor(
@@ -101,15 +134,82 @@ export class LogsService {
     private readonly prisma: PrismaService,
     @InjectQueue(EMBEDDING_QUEUE)
     private readonly embeddingQueue: Queue,
+    @InjectQueue(SCRAPER_QUEUE)
+    private readonly scraperQueue: Queue,
+    @InjectQueue(CLIENT_MATCHING_QUEUE)
+    private readonly matchingQueue: Queue,
   ) {}
 
-  async findByType(type: JobLogType, query: LogsQuery): Promise<LogsResult> {
+  private summarizeJobData(data: unknown): Record<string, unknown> | null {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return null;
+    }
+
+    return Object.fromEntries(
+      Object.entries(data)
+        .slice(0, 8)
+        .map(([key, value]) => {
+          if (typeof value === "string" && value.length > 120) {
+            return [key, `${value.slice(0, 117)}...`];
+          }
+
+          return [key, value];
+        }),
+    );
+  }
+
+  private mapJobs(
+    state: "waiting" | "active" | "delayed",
+    jobs: Job[],
+  ): QueueJobPreview[] {
+    return jobs.map((job) => ({
+      id: String(job.id),
+      name: job.name,
+      state,
+      attemptsMade: job.attemptsMade,
+      createdAt: job.timestamp,
+      delay: job.delay,
+      data: this.summarizeJobData(job.data),
+    }));
+  }
+
+  private async getQueueDetails(
+    queue: Queue,
+    key: string,
+    label: string,
+  ): Promise<QueueDetails> {
+    const [counts, waiting, active, delayed] = await Promise.all([
+      queue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+      queue.getWaiting(0, 9),
+      queue.getActive(0, 4),
+      queue.getDelayed(0, 4),
+    ]);
+
+    return {
+      key,
+      label,
+      counts: {
+        waiting: counts.waiting,
+        active: counts.active,
+        completed: counts.completed,
+        failed: counts.failed,
+        delayed: counts.delayed,
+      },
+      pending: [
+        ...this.mapJobs("waiting", waiting),
+        ...this.mapJobs("active", active),
+        ...this.mapJobs("delayed", delayed),
+      ],
+    };
+  }
+
+  async findByType(type: SupportedJobLogType, query: LogsQuery): Promise<LogsResult> {
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(200, Math.max(1, query.limit ?? 50));
     const skip = (page - 1) * limit;
 
     const where = {
-      type,
+      type: type as JobLogType,
       ...(query.status ? { status: query.status } : {}),
       ...(query.jobName ? { jobName: query.jobName } : {}),
     };
@@ -136,13 +236,13 @@ export class LogsService {
   }
 
   async getStats(): Promise<LogsStats> {
-    const types: JobLogType[] = ["SCRAPER", "EMBEDDING", "REPORT"];
+    const types: SupportedJobLogType[] = ["SCRAPER", "EMBEDDING", "MATCHING", "REPORT"];
 
     const results = await Promise.all(
       types.map(async (type) => {
         const rows = await this.prisma.jobLog.groupBy({
           by: ["status"],
-          where: { type },
+          where: { type: type as JobLogType },
           _count: { status: true },
         });
 
@@ -152,13 +252,13 @@ export class LogsService {
         }
 
         const lastLog = await this.prisma.jobLog.findFirst({
-          where: { type, status: { in: ["COMPLETED", "FAILED"] } },
+          where: { type: type as JobLogType, status: { in: ["COMPLETED", "FAILED"] } },
           orderBy: { startedAt: "desc" },
           select: { startedAt: true },
         });
 
         const avgResult = await this.prisma.jobLog.aggregate({
-          where: { type, status: "COMPLETED", durationMs: { not: null } },
+          where: { type: type as JobLogType, status: "COMPLETED", durationMs: { not: null } },
           _avg: { durationMs: true },
         });
 
@@ -176,10 +276,15 @@ export class LogsService {
       }),
     );
 
+    const statsMap = Object.fromEntries(
+      results.map((entry) => [entry.type, entry.stats]),
+    ) as Record<SupportedJobLogType, TypeStats>;
+
     return {
-      scraper: results.find((r) => r.type === "SCRAPER")!.stats,
-      embedding: results.find((r) => r.type === "EMBEDDING")!.stats,
-      report: results.find((r) => r.type === "REPORT")!.stats,
+      scraper: statsMap.SCRAPER,
+      embedding: statsMap.EMBEDDING,
+      matching: statsMap.MATCHING,
+      report: statsMap.REPORT,
     };
   }
 
@@ -309,6 +414,19 @@ export class LogsService {
       totalTokens: sumTotal,
       jobsWithTokens: sumJobs,
       byType,
+    };
+  }
+
+  async getQueuesOverview(): Promise<QueuesOverview> {
+    const queues = await Promise.all([
+      this.getQueueDetails(this.scraperQueue, "scraper", "Scraper"),
+      this.getQueueDetails(this.embeddingQueue, "embedding", "Embedding"),
+      this.getQueueDetails(this.matchingQueue, "client-matching", "Client matching"),
+    ]);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      queues,
     };
   }
 }

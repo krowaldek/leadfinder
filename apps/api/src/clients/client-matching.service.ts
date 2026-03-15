@@ -895,7 +895,24 @@ export class ClientMatchingService {
       !profile.expectedKinds.includes(announcementKind);
 
     if (profile.mustHave.length === 0) {
-      return 0;
+      const niceMatches = profile.niceToHave.filter((term) => hasTermMatch(haystack, term)).length;
+      const contextMatches = profile.titleContext.filter((term) => hasTermMatch(haystack, term)).length;
+      const anchorMatches = profile.requiredAnchors.filter((term) => hasTermMatch(haystack, term)).length;
+      const niceCoverage = profile.niceToHave.length > 0 ? niceMatches / profile.niceToHave.length : 0;
+      const contextCoverage = profile.titleContext.length > 0 ? contextMatches / profile.titleContext.length : 0;
+      const anchorCoverage = profile.requiredAnchors.length > 0
+        ? anchorMatches / profile.requiredAnchors.length
+        : 0;
+      const kindBonus =
+        profile.expectedKinds.length > 0 && announcementKind && profile.expectedKinds.includes(announcementKind)
+          ? 0.1
+          : 0;
+
+      return clamp(
+        (niceCoverage * 0.35 + contextCoverage * 0.4 + anchorCoverage * 0.25) *
+          (hasKindMismatch ? 0.45 : 1) +
+          kindBonus,
+      );
     }
 
     const mustMatches = profile.mustHave.filter((term) => hasTermMatch(haystack, term)).length;
@@ -989,13 +1006,13 @@ export class ClientMatchingService {
     );
 
     const mustHave = uniqueTokens(
-      (parsed?.mustHave.length ? parsed.mustHave : [...titleDomainTokens, ...promptDomainTokens.slice(0, 4)])
+      (parsed?.mustHave.length ? parsed.mustHave : [])
         .map((term) => normalizeForMatch(term))
         .filter(Boolean),
     ).slice(0, 8);
 
     const niceToHave = uniqueTokens(
-      (parsed?.niceToHave.length ? parsed.niceToHave : promptDomainTokens)
+      (parsed?.niceToHave.length ? parsed.niceToHave : [...titleDomainTokens, ...promptDomainTokens])
         .map((term) => normalizeForMatch(term))
         .filter((term) => term && !mustHave.includes(term)),
     ).slice(0, 10);

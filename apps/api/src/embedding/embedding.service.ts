@@ -194,10 +194,26 @@ export class EmbeddingService {
       title: string;
       description: string | null;
       searchContext: string;
+      kind: string | null;
       rawData: unknown;
       sourceSystem: string | null;
     },
   ): Promise<TokenUsage | null> {
+    if (getEmbeddingProvider(this.config) === "GOOGLE") {
+      this.logger.debug(
+        `Skipping OpenAI announcement analysis for ${announcementId} because embedding provider is GOOGLE`,
+      );
+
+      if (!announcement.kind) {
+        await this.prisma.announcement.update({
+          where: { id: announcementId },
+          data: { kind: "INNE" },
+        });
+      }
+
+      return null;
+    }
+
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) {
       this.logger.warn("OPENAI_API_KEY not set — skipping analysis");

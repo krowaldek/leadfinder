@@ -188,7 +188,16 @@ export function TopicsPage() {
         icon: <RefreshCw className="size-4" />,
         onClick: (t) => {
           rematchClient(t.clientId)
-            .then(() => toast.success("Przeliczanie dopasowań zakolejkowane"))
+            .then((result) => {
+              if (result.topicEmbeddingsQueued > 0) {
+                toast.success(
+                  `Zakolejkowano ${result.topicEmbeddingsQueued} embedding${result.topicEmbeddingsQueued === 1 ? "" : "i"} tematów. Dopasowania pojawią się po ich przeliczeniu.`,
+                );
+                return;
+              }
+
+              toast.success("Przeliczanie dopasowań zakolejkowane");
+            })
             .catch(() => toast.error("Nie udało się zakolejkować przeliczenia"));
         },
       },
