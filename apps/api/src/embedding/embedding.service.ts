@@ -171,6 +171,8 @@ export class EmbeddingService {
     const refreshed = await this.prisma.announcement.findUnique({
       where: { id: announcementId },
       select: {
+        title: true,
+        description: true,
         searchContext: true,
         kind: true,
         detailedReport: true,
@@ -290,6 +292,8 @@ export class EmbeddingService {
   private async buildAndSaveEmbedding(
     announcementId: string,
     data: {
+      title: string;
+      description: string | null;
       searchContext: string;
       kind: string | null;
       detailedReport: string | null;
@@ -298,6 +302,8 @@ export class EmbeddingService {
     },
   ): Promise<void> {
     const embeddingInput = this.buildEmbeddingInput({
+      title: data.title,
+      description: data.description,
       kind: (data.kind ?? "INNE") as AnnouncementKind,
       detailedReport: data.detailedReport,
       searchContext: data.searchContext,
@@ -458,10 +464,16 @@ export class EmbeddingService {
   // ---------------------------------------------------------------------------
 
   private buildEmbeddingInput(input: {
+    title: string;
+    description: string | null;
     kind: AnnouncementKind;
     detailedReport: string | null;
     searchContext: string;
   }): string {
+    const compactTitle = input.title.trim();
+    const compactDescription = input.description?.trim()
+      ? input.description.trim().slice(0, MAX_EMBEDDING_CONTEXT_CHARS)
+      : null;
     const compactContext =
       input.searchContext.length > MAX_EMBEDDING_CONTEXT_CHARS
         ? `${input.searchContext.slice(0, MAX_EMBEDDING_CONTEXT_CHARS)}…`
@@ -472,6 +484,8 @@ export class EmbeddingService {
 
     return [
       `RODZAJ: ${KIND_LABELS[input.kind]}`,
+      compactTitle ? `TYTUŁ: ${compactTitle}` : null,
+      compactDescription ? `OPIS: ${compactDescription}` : null,
       compactReport ? `RAPORT:\n${compactReport}` : null,
       `KONTEKST: ${compactContext}`,
     ]

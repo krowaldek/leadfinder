@@ -35,6 +35,18 @@ interface TopicMatchRow {
   negative_keywords: string[];
 }
 
+interface TopicCandidate {
+  topic_id: string;
+  title: string;
+  prompt: string;
+  negative_keywords: string[];
+  semantic: number;
+  domain: number;
+  hybrid: number;
+  rerank: number | null;
+  final: number;
+}
+
 interface ScoredCandidate {
   announcement_id: string;
   title: string;
@@ -523,11 +535,12 @@ export class ClientMatchingService {
         title: string;
         description: string | null;
         search_context: string;
+        detailed_report: string | null;
         embedding: string | null;
         kind: AnnouncementKind | null;
       }>
     >`
-      SELECT id, title, description, "searchContext" AS search_context, embedding::text, kind
+      SELECT id, title, description, "searchContext" AS search_context, "detailedReport" AS detailed_report, embedding::text, kind
       FROM announcements
       WHERE id = ${announcementId}::uuid
         AND "embeddingStatus" = 'EMBEDDED'
@@ -565,6 +578,8 @@ export class ClientMatchingService {
       `Announcement ${announcementId}: ${matchingTopics.length} topic(s) matched above threshold`,
     );
 
+    const candidates: TopicCandidate[] = [];
+
     for (const topicRow of matchingTopics) {
       const profile = this.resolveTopicProfile(
         topicRow.title,
@@ -587,19 +602,52 @@ export class ClientMatchingService {
         continue;
       }
 
-      await this.prisma.clientMatch.upsert({
-        where: {
-          topicId_announcementId: { topicId: topicRow.topic_id, announcementId },
-        },
-        create: {
-          topicId: topicRow.topic_id,
-          announcementId,
-          similarity: finalSimilarity,
-          status: "NEW",
-        },
-        update: { similarity: finalSimilarity, updatedAt: new Date() },
+      candidates.push({
+        topic_id: topicRow.topic_id,
+        title: topicRow.title,
+        prompt: topicRow.prompt,
+        negative_keywords: (topicRow.negative_keywords ?? []) as string[],
+        semantic: Number(topicRow.similarity),
+        domain: domainScore,
+        hybrid: finalSimilarity,
+        rerank: null,
+        final: finalSimilarity,
       });
     }
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const finalCandidates = (await this.applyAnnouncementRerank(
+      {
+        title: ann.title,
+        description: ann.description,
+        searchContext: ann.search_context,
+        detailedReport: ann.detailed_report,
+        kind: ann.kind,
+      },
+      candidates.sort((left, right) => right.final - left.final),
+    )).filter((candidate) => candidate.final >= MIN_STORED_MATCH_SCORE);
+
+    for (const candidate of finalCandidates) {
+      await this.prisma.clientMatch.upsert({
+        where: {
+          topicId_announcementId: { topicId: candidate.topic_id, announcementId },
+        },
+        create: {
+          topicId: candidate.topic_id,
+          announcementId,
+          similarity: candidate.final,
+          status: "NEW",
+        },
+        update: { similarity: candidate.final, updatedAt: new Date() },
+      });
+    }
+
+    this.logger.log(
+      `Announcement ${announcementId}: persisted ${finalCandidates.length} topic match(es) after rerank`,
+    );
   }
 
   // ── matchClient ─────────────────────────────────────────────────────────────
@@ -800,7 +848,7 @@ export class ClientMatchingService {
 
       const parsed = this.parseJson<{
         ranked?: Array<{ id?: string; score?: number; reason?: string }>;
-      }>(String(result.content));
+      }>(this.extractJsonLikeText(result.content));
 
       const rerankMap = new Map<string, number>();
       for (const row of parsed.ranked ?? []) {
@@ -831,7 +879,111 @@ export class ClientMatchingService {
     }
   }
 
+  private async applyAnnouncementRerank(
+    announcement: {
+      title: string;
+      description: string | null;
+      searchContext: string;
+      detailedReport: string | null;
+      kind: AnnouncementKind | null;
+    },
+    candidates: TopicCandidate[],
+  ): Promise<TopicCandidate[]> {
+    const apiKey = this.config.get<string>("OPENAI_API_KEY");
+    if (!apiKey || candidates.length === 0) {
+      return candidates;
+    }
+
+    const window = candidates.slice(0, RERANK_WINDOW);
+    const rest = candidates.slice(RERANK_WINDOW);
+
+    try {
+      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      const llm = new ChatOpenAI({
+        apiKey,
+        model,
+        modelKwargs: { response_format: { type: "json_object" } },
+      });
+
+      const compactCandidates = window.map((candidate) => ({
+        id: candidate.topic_id,
+        title: candidate.title,
+        profile: candidate.prompt.slice(0, 320),
+        semantic: candidate.semantic,
+        domain: candidate.domain,
+        hybrid: candidate.hybrid,
+      }));
+
+      const result = await llm.invoke([
+        [
+          "system",
+          `Jesteś ekspertem od zamówień publicznych w Polsce. Oceniasz, czy ogłoszenie pasuje do profilu klienta. Dla każdego tematu zwróć score 0.0-1.0 określający trafność dopasowania ogłoszenia do tematu. Bierz pod uwagę branżę, rzeczywisty zakres, wymagania i rodzaj zamówienia. Odpowiedz WYŁĄCZNIE jako JSON: {"ranked":[{"id":"...","score":0.0-1.0,"reason":"krótki powód po polsku (max 70 znaków)"}]}`,
+        ],
+        [
+          "human",
+          `Ogłoszenie do oceny:\nTytuł: ${announcement.title}\nRodzaj: ${announcement.kind ?? "INNE"}\nOpis: ${(announcement.description ?? "brak").slice(0, 500)}\nKontekst: ${announcement.searchContext.slice(0, 700)}\nRaport: ${(announcement.detailedReport ?? "brak").slice(0, 1200)}\n\nTematy klienta do oceny:\n${JSON.stringify(compactCandidates)}`,
+        ],
+      ]);
+
+      const parsed = this.parseJson<{
+        ranked?: Array<{ id?: string; score?: number; reason?: string }>;
+      }>(this.extractJsonLikeText(result.content));
+
+      const rerankMap = new Map<string, number>();
+      for (const row of parsed.ranked ?? []) {
+        if (row.id) rerankMap.set(row.id, clamp(Number(row.score) || 0));
+      }
+
+      const rerankedWindow = window.map((candidate) => {
+        const rerankScore = rerankMap.get(candidate.topic_id) ?? null;
+        const final =
+          rerankScore != null
+            ? clamp(candidate.hybrid * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
+            : candidate.hybrid;
+
+        return {
+          ...candidate,
+          rerank: rerankScore,
+          final,
+        };
+      });
+
+      const all = [...rerankedWindow, ...rest].sort((left, right) => right.final - left.final);
+
+      this.logger.log(
+        `Re-ranked top ${window.length} topic candidate(s) with LLM for announcement "${announcement.title}"`,
+      );
+
+      return all;
+    } catch (err) {
+      this.logger.warn(
+        `Announcement LLM re-ranking failed, falling back to hybrid score: ${(err as Error).message}`,
+      );
+      return candidates;
+    }
+  }
+
   // ── Private: JSON parser ───────────────────────────────────────────────────
+
+  private extractJsonLikeText(content: unknown): string {
+    if (typeof content === "string") {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (!item || typeof item !== "object") return "";
+
+          const candidate = item as { text?: string };
+          return typeof candidate.text === "string" ? candidate.text : "";
+        })
+        .join("\n");
+    }
+
+    return String(content ?? "");
+  }
 
   private parseJson<T>(content: string): T {
     try {

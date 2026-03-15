@@ -11,6 +11,7 @@ import {
   type RawAttachmentLike,
 } from "../common/attachment-text.js";
 import { buildAiOperationLog } from "../common/ai-usage.js";
+import { EmbeddingService } from "../embedding/embedding.service.js";
 import { JobLoggerService } from "../logs/job-logger.service.js";
 
 const MAX_CHARS_PER_FILE = 7_000;
@@ -158,6 +159,8 @@ export class AnnouncementReportService {
     private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService<AppEnv>,
+    @Inject(EmbeddingService)
+    private readonly embeddingService: EmbeddingService,
     @Inject(JobLoggerService)
     private readonly jobLogger: JobLoggerService,
   ) {}
@@ -206,6 +209,7 @@ export class AnnouncementReportService {
         searchContext: true,
         rawData: true,
         detailedReport: true,
+        embeddingStatus: true,
       },
     });
 
@@ -355,8 +359,13 @@ export class AnnouncementReportService {
     // ── 4. Zapisz wynik ──────────────────────────────────────────────────────
     await this.prisma.announcement.update({
       where: { id: announcementId },
-      data: { detailedReport: report },
+      data: {
+        detailedReport: report,
+        embeddingStatus: "PENDING",
+      },
     });
+
+    await this.embeddingService.enqueueAnnouncementEmbedding(announcementId);
 
     this.logger.log(`Report generated for announcement ${announcementId} (${report.length} chars)`);
 
@@ -381,6 +390,8 @@ export class AnnouncementReportService {
           reportLength: report.length,
           attachmentsProcessed: attachmentTexts.length,
           llmUsed,
+          reembedQueued: true,
+          previousEmbeddingStatus: announcement.embeddingStatus,
           aiOperations,
           ...(llmFailureReason ? { llmFailureReason } : {}),
           ...(promptTokens || completionTokens

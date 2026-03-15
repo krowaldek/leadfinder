@@ -310,6 +310,8 @@ export class ClientsService {
     );
 
     const promptChanged = prepared.prompt !== topic.prompt;
+    const titleChanged = data.title !== undefined && data.title !== topic.title;
+    const embeddingInputChanged = promptChanged || titleChanged;
 
     const updated = await this.prisma.topic.update({
       where: { id: topicId },
@@ -322,13 +324,12 @@ export class ClientsService {
         data.matchingProfile !== undefined
           ? { negativeKeywords: prepared.negativeKeywords }
           : {}),
-        // Reset embedding when prompt changes so it gets re-embedded
-        ...(promptChanged && { embeddingStatus: "PENDING" }),
+        ...(embeddingInputChanged && { embeddingStatus: "PENDING" }),
       },
       include: { _count: { select: { matches: true } } },
     });
 
-    if (promptChanged) {
+    if (embeddingInputChanged) {
       await this.enqueueTopicEmbedding(updated.id);
     }
 
