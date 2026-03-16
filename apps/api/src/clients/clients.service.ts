@@ -1,4 +1,5 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
+import { ClientMatchingService } from "./client-matching.service.js";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -35,6 +36,8 @@ export class ClientsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ConfigService) private readonly config: ConfigService<AppEnv>,
+    @Inject(ClientMatchingService)
+    private readonly clientMatchingService: ClientMatchingService,
     @InjectQueue(CLIENT_MATCHING_QUEUE)
     private readonly matchingQueue: Queue,
     @InjectQueue(EMBEDDING_QUEUE)
@@ -175,6 +178,187 @@ export class ClientsService {
         };
       }),
       meta: { total: matches.length },
+    };
+  }
+
+  async getTopicMatchingDebug(
+    clientId: string,
+    projectId: string,
+    topicId: string,
+  ) {
+    const topic = await this.prisma.topic.findFirst({
+      where: { id: topicId, projectId, project: { clientId } },
+      select: {
+        id: true,
+        title: true,
+        prompt: true,
+        embeddingStatus: true,
+        negativeKeywords: true,
+        project: {
+          select: {
+            id: true,
+            name: true,
+            client: { select: { id: true, companyName: true } },
+          },
+        },
+      },
+    });
+
+    if (!topic) {
+      throw new NotFoundException("Topic not found");
+    }
+
+    const pipelineDebug = await this.clientMatchingService.buildTopicMatchingDebugReport(topicId);
+
+    const matches = await this.prisma.clientMatch.findMany({
+      where: { topicId },
+      include: {
+        announcement: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            url: true,
+            sourceSystem: true,
+            externalId: true,
+            partIndex: true,
+            kind: true,
+            searchContext: true,
+            detailedReport: true,
+            llmEstimatedValue: true,
+            publishedAt: true,
+            deadlineAt: true,
+            valueMin: true,
+            valueMax: true,
+          },
+        },
+      },
+      orderBy: { similarity: "desc" },
+    });
+
+    const parsedMatches = matches.map((match) => ({
+      id: match.id,
+      similarity: match.similarity,
+      status: match.status,
+      createdAt: match.createdAt.toISOString(),
+      updatedAt: match.updatedAt.toISOString(),
+      debug: match.debug ?? null,
+      announcement: {
+        id: match.announcement.id,
+        title: match.announcement.title,
+        description: match.announcement.description,
+        url: match.announcement.url,
+        sourceSystem: match.announcement.sourceSystem,
+        externalId: match.announcement.externalId,
+        partIndex: match.announcement.partIndex,
+        kind: match.announcement.kind ?? null,
+        searchContext: match.announcement.searchContext,
+        detailedReport: match.announcement.detailedReport ?? null,
+        llmEstimatedValue: match.announcement.llmEstimatedValue?.toString() ?? null,
+        publishedAt: match.announcement.publishedAt?.toISOString() ?? null,
+        deadlineAt: match.announcement.deadlineAt?.toISOString() ?? null,
+        valueMin: match.announcement.valueMin?.toString() ?? null,
+        valueMax: match.announcement.valueMax?.toString() ?? null,
+      },
+    }));
+
+    const candidateAnnouncementIds = pipelineDebug?.candidates.map((candidate) => candidate.announcementId) ?? [];
+
+    const candidateAnnouncements = candidateAnnouncementIds.length > 0
+      ? await this.prisma.announcement.findMany({
+        where: {
+          id: { in: candidateAnnouncementIds },
+        },
+        select: {
+          id: true,
+          description: true,
+          searchContext: true,
+          detailedReport: true,
+        },
+      })
+      : [];
+
+    const announcementLookup = new Map(
+      candidateAnnouncements.map((announcement) => [
+        announcement.id,
+        {
+          description: announcement.description,
+          searchContext: announcement.searchContext,
+          detailedReport: announcement.detailedReport,
+        },
+      ]),
+    );
+
+    const rawVectorHits = pipelineDebug?.candidates.map((candidate) => {
+      const announcementText = announcementLookup.get(candidate.announcementId);
+
+      return {
+        announcementId: candidate.announcementId,
+        title: candidate.title,
+        semantic: candidate.semantic,
+        keyword: candidate.keyword,
+        domain: candidate.domain,
+        hybrid: candidate.hybrid,
+        rerank: candidate.rerank,
+        final: candidate.final,
+        stage: candidate.keptAfterRerank
+          ? "FINAL"
+          : candidate.sentToRerank
+            ? "RERANKED"
+            : candidate.keptAfterFilters
+              ? "PRE_RERANK"
+              : candidate.keyword > 0 || candidate.domain > 0
+                ? "MERGED"
+                : "VECTOR",
+        keptAfterFilters: candidate.keptAfterFilters,
+        sentToRerank: candidate.sentToRerank,
+        keptAfterRerank: candidate.keptAfterRerank,
+        negativePenaltyApplied: candidate.negativePenaltyApplied,
+        rejectionReasons: candidate.rejectionReasons,
+        announcementVectorText:
+          announcementText?.detailedReport
+          ?? announcementText?.searchContext
+          ?? announcementText?.description
+          ?? null,
+      };
+    }) ?? [];
+
+    const vectorCandidates = rawVectorHits;
+
+    return {
+      data: {
+        topic: {
+          id: topic.id,
+          title: topic.title,
+          prompt: topic.prompt,
+          embeddingStatus: topic.embeddingStatus,
+          negativeKeywords: topic.negativeKeywords,
+          vectorText: topic.prompt,
+          project: {
+            id: topic.project.id,
+            name: topic.project.name,
+          },
+          client: {
+            id: topic.project.client.id,
+            companyName: topic.project.client.companyName,
+          },
+        },
+        summary: {
+          storedMatches: parsedMatches.length,
+          vectorCandidates: pipelineDebug?.counts.vector ?? vectorCandidates.length,
+          rerankCandidates:
+            pipelineDebug?.counts.preRerank
+            ?? vectorCandidates.filter((candidate) => candidate.keptAfterFilters).length,
+          reranked:
+            pipelineDebug?.counts.rerankWindow
+            ?? vectorCandidates.filter((candidate) => candidate.sentToRerank).length,
+          shortlisted: parsedMatches.filter((match) => match.status === "SHORTLISTED").length,
+          dismissed: parsedMatches.filter((match) => match.status === "DISMISSED").length,
+        },
+        rawVectorHits,
+        vectorCandidates,
+        finalMatches: parsedMatches,
+      },
     };
   }
 

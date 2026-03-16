@@ -61,6 +61,35 @@ interface ScoredCandidate {
   final: number;
 }
 
+interface TopicMatchingDebugCandidate {
+  announcementId: string;
+  title: string;
+  semantic: number;
+  keyword: number;
+  domain: number;
+  hybrid: number;
+  rerank: number | null;
+  final: number;
+  keptAfterFilters: boolean;
+  sentToRerank: boolean;
+  keptAfterRerank: boolean;
+  negativePenaltyApplied: boolean;
+  rejectionReasons: string[];
+}
+
+interface TopicMatchingDebugReport {
+  topicId: string;
+  counts: {
+    vector: number;
+    keyword: number;
+    merged: number;
+    preRerank: number;
+    rerankWindow: number;
+    final: number;
+  };
+  candidates: TopicMatchingDebugCandidate[];
+}
+
 interface ResolvedTopicProfile {
   title: string;
   summary: string;
@@ -429,6 +458,34 @@ export class ClientMatchingService {
    *   6. Upsert ClientMatch rows & remove stale ones
    */
   async matchTopic(topicId: string): Promise<number> {
+    const debugReport = await this.buildTopicMatchingDebugReport(topicId);
+
+    const finalCandidates = debugReport.candidates
+      .filter((candidate) => candidate.keptAfterRerank && candidate.final >= MIN_STORED_MATCH_SCORE);
+
+    // 6. Upsert
+    const retainedIds = new Set<string>();
+    for (const c of finalCandidates) {
+      retainedIds.add(c.announcementId);
+      await this.prisma.clientMatch.upsert({
+        where: { topicId_announcementId: { topicId, announcementId: c.announcementId } },
+        create: { topicId, announcementId: c.announcementId, similarity: c.final, status: "NEW" },
+        update: { similarity: c.final, updatedAt: new Date() },
+      });
+    }
+
+    if (retainedIds.size > 0) {
+      await this.prisma.clientMatch.deleteMany({
+        where: { topicId, announcementId: { notIn: Array.from(retainedIds) } },
+      });
+    } else {
+      await this.prisma.clientMatch.deleteMany({ where: { topicId } });
+    }
+
+    return finalCandidates.length;
+  }
+
+  async buildTopicMatchingDebugReport(topicId: string): Promise<TopicMatchingDebugReport> {
     const rows = await this.prisma.$queryRaw<
       Array<{
         id: string;
@@ -447,14 +504,24 @@ export class ClientMatchingService {
 
     if (!rows.length || !rows[0]?.embedding) {
       this.logger.warn(`Topic ${topicId} not yet embedded, skipping match`);
-      return 0;
+      return {
+        topicId,
+        counts: {
+          vector: 0,
+          keyword: 0,
+          merged: 0,
+          preRerank: 0,
+          rerankWindow: 0,
+          final: 0,
+        },
+        candidates: [],
+      };
     }
 
     const { embedding: vectorStr, title: topicTitle, prompt: topicPrompt } = rows[0];
     const negativeKeywords = (rows[0].negative_keywords ?? []) as string[];
     const profile = this.resolveTopicProfile(topicTitle, topicPrompt, negativeKeywords);
 
-    // 1. Vector candidates
     const vectorRows = await this.prisma.$queryRaw<AnnouncementVectorRow[]>`
       SELECT
         a.id AS announcement_id,
@@ -471,22 +538,32 @@ export class ClientMatchingService {
       LIMIT ${VECTOR_CANDIDATE_LIMIT}
     `;
 
-    // 2. Keyword candidates (first 400 chars of prompt as free-text query)
     const keywordQuery = profile.keywordQuery;
     const keywordRows = await this.runKeywordSearch(keywordQuery, KEYWORD_MATCH_LIMIT);
-
-    // 3. Merge + hybrid score
     const merged = this.mergeAndScore(profile, vectorRows, keywordRows);
 
-    // 4. Negative keyword penalty — use full haystack: title + description + searchContext
-    const penalized = merged.map((c) => {
-      const haystack = `${c.title} ${c.description ?? ""} ${c.search_context}`.toLowerCase();
-      const bad = applyNegativePenalty(haystack, negativeKeywords);
-      return bad ? { ...c, hybrid: clamp(c.hybrid * NEGATIVE_KEYWORD_PENALTY) } : c;
+    const penalized = merged.map((candidate) => {
+      const haystack = `${candidate.title} ${candidate.description ?? ""} ${candidate.search_context}`.toLowerCase();
+      const negativePenaltyApplied = applyNegativePenalty(haystack, negativeKeywords);
+      const hybrid = negativePenaltyApplied
+        ? clamp(candidate.hybrid * NEGATIVE_KEYWORD_PENALTY)
+        : candidate.hybrid;
+
+      return {
+        ...candidate,
+        hybrid,
+        negativePenaltyApplied,
+      };
     });
 
+    const keptAfterFiltersIds = new Set(
+      penalized
+        .filter((candidate) => this.shouldKeepCandidate(candidate))
+        .map((candidate) => candidate.announcement_id),
+    );
+
     const sorted = penalized
-      .filter((candidate) => this.shouldKeepCandidate(candidate))
+      .filter((candidate) => keptAfterFiltersIds.has(candidate.announcement_id))
       .sort((a, b) => b.hybrid - a.hybrid)
       .slice(0, FINAL_MATCH_LIMIT);
 
@@ -494,31 +571,58 @@ export class ClientMatchingService {
       `Topic "${topicTitle}": vector=${vectorRows.length}, keyword=${keywordRows.length}, merged=${merged.length}, pre-rerank=${sorted.length}`,
     );
 
-    // 5. LLM re-ranking of top candidates
-    const finalCandidates = (await this.applyRerank(profile, sorted)).filter(
-      (candidate) => candidate.final >= MIN_STORED_MATCH_SCORE,
+    const reranked = await this.applyRerank(profile, sorted);
+    const rerankWindowIds = new Set(sorted.slice(0, RERANK_WINDOW).map((candidate) => candidate.announcement_id));
+    const keptAfterRerankIds = new Set(
+      reranked
+        .filter((candidate) => candidate.final >= MIN_STORED_MATCH_SCORE)
+        .map((candidate) => candidate.announcement_id),
     );
+    const rerankedMap = new Map(reranked.map((candidate) => [candidate.announcement_id, candidate] as const));
 
-    // 6. Upsert
-    const retainedIds = new Set<string>();
-    for (const c of finalCandidates) {
-      retainedIds.add(c.announcement_id);
-      await this.prisma.clientMatch.upsert({
-        where: { topicId_announcementId: { topicId, announcementId: c.announcement_id } },
-        create: { topicId, announcementId: c.announcement_id, similarity: c.final, status: "NEW" },
-        update: { similarity: c.final, updatedAt: new Date() },
-      });
-    }
+    const candidates = penalized
+      .map((candidate) => {
+        const rerankedCandidate = rerankedMap.get(candidate.announcement_id);
+        const keptAfterFilters = keptAfterFiltersIds.has(candidate.announcement_id);
+        const sentToRerank = rerankWindowIds.has(candidate.announcement_id);
+        const keptAfterRerank = keptAfterRerankIds.has(candidate.announcement_id);
+        const effective = rerankedCandidate ?? { ...candidate, final: candidate.hybrid, rerank: null };
+        const rejectionReasons = this.getCandidateRejectionReasons(candidate, {
+          keptAfterFilters,
+          sentToRerank,
+          keptAfterRerank,
+        });
 
-    if (retainedIds.size > 0) {
-      await this.prisma.clientMatch.deleteMany({
-        where: { topicId, announcementId: { notIn: Array.from(retainedIds) } },
-      });
-    } else {
-      await this.prisma.clientMatch.deleteMany({ where: { topicId } });
-    }
+        return {
+          announcementId: candidate.announcement_id,
+          title: candidate.title,
+          semantic: candidate.semantic,
+          keyword: candidate.keyword,
+          domain: candidate.domain,
+          hybrid: candidate.hybrid,
+          rerank: effective.rerank,
+          final: effective.final,
+          keptAfterFilters,
+          sentToRerank,
+          keptAfterRerank,
+          negativePenaltyApplied: candidate.negativePenaltyApplied,
+          rejectionReasons,
+        };
+      })
+      .sort((a, b) => b.final - a.final);
 
-    return finalCandidates.length;
+    return {
+      topicId,
+      counts: {
+        vector: vectorRows.length,
+        keyword: keywordRows.length,
+        merged: merged.length,
+        preRerank: sorted.length,
+        rerankWindow: Math.min(sorted.length, RERANK_WINDOW),
+        final: keptAfterRerankIds.size,
+      },
+      candidates,
+    };
   }
 
   // ── matchAllTopicsAgainstAnnouncement ──────────────────────────────────────
@@ -1142,6 +1246,51 @@ export class ClientMatchingService {
     }
 
     return semantic >= STRONG_SEMANTIC_MATCH && (domain >= SOFT_DOMAIN_SCORE || profile.mustHave.length <= 1);
+  }
+
+  private getCandidateRejectionReasons(
+    candidate: ScoredCandidate & { negativePenaltyApplied?: boolean },
+    flags: {
+      keptAfterFilters: boolean;
+      sentToRerank: boolean;
+      keptAfterRerank: boolean;
+    },
+  ): string[] {
+    const reasons: string[] = [];
+
+    if (candidate.negativePenaltyApplied) {
+      reasons.push("negative-keyword-penalty");
+    }
+
+    if (candidate.hybrid < MIN_FINAL_SCORE) {
+      reasons.push("hybrid-below-min-final-score");
+    }
+
+    if (candidate.domain < MIN_DOMAIN_SCORE) {
+      reasons.push("domain-below-min-domain-score");
+    }
+
+    if (
+      candidate.domain < SOFT_DOMAIN_SCORE &&
+      candidate.semantic < STRONG_SEMANTIC_MATCH &&
+      candidate.keyword < STRONG_KEYWORD_MATCH
+    ) {
+      reasons.push("insufficient-domain-support");
+    }
+
+    if (!flags.keptAfterFilters) {
+      reasons.push("filtered-before-rerank");
+    }
+
+    if (flags.keptAfterFilters && !flags.sentToRerank) {
+      reasons.push("outside-rerank-window");
+    }
+
+    if (flags.sentToRerank && !flags.keptAfterRerank) {
+      reasons.push("final-below-stored-threshold");
+    }
+
+    return reasons;
   }
 
   private resolveTopicProfile(
