@@ -118,36 +118,22 @@ export class ClientsService {
             project: { select: { id: true, name: true } },
           },
         },
-        announcement: {
-          select: {
-            id: true,
-            partIndex: true,
-            title: true,
-            description: true,
-            url: true,
-            sourceSystem: true,
-            externalId: true,
-            kind: true,
-            searchContext: true,
-            llmEstimatedValue: true,
-            detailedReport: true,
-            publishedAt: true,
-            deadlineAt: true,
-            valueMin: true,
-            valueMax: true,
-            rawData: true,
-          },
-        },
+        announcement: true,
       },
       orderBy: { similarity: "desc" },
     });
 
     return {
       data: matches.map((m) => {
-        const rawData = m.announcement.rawData as { orders?: unknown[] } | null;
+        const announcement = m.announcement as typeof m.announcement & {
+          aiTitle?: string | null;
+          location?: string | null;
+          contractingAuthority?: string | null;
+        };
+        const rawData = announcement.rawData as { orders?: unknown[] } | null;
         const ordersCount = Array.isArray(rawData?.orders) ? rawData.orders.length : 0;
         const isMultiPart =
-          m.announcement.sourceSystem === "BAZA_KONKURENCYJNOSCI" && ordersCount > 1;
+          announcement.sourceSystem === "BAZA_KONKURENCYJNOSCI" && ordersCount > 1;
 
         return {
         id: m.id,
@@ -162,24 +148,28 @@ export class ClientsService {
           projectName: m.topic.project.name,
         },
         announcement: {
-          id: m.announcement.id,
-          partIndex: m.announcement.partIndex,
-          title: m.announcement.title,
-          description: m.announcement.description,
-          url: m.announcement.url,
-          sourceSystem: m.announcement.sourceSystem,
-          externalId: m.announcement.externalId,
-          kind: m.announcement.kind ?? null,
-          searchContext: m.announcement.searchContext,
+          id: announcement.id,
+          partIndex: announcement.partIndex,
+          title: announcement.title,
+          aiTitle: announcement.aiTitle ?? null,
+          displayTitle: announcement.aiTitle ?? announcement.title,
+          description: announcement.description,
+          url: announcement.url,
+          sourceSystem: announcement.sourceSystem,
+          externalId: announcement.externalId,
+          kind: announcement.kind ?? null,
+          searchContext: announcement.searchContext,
           llmEstimatedValue:
-            m.announcement.llmEstimatedValue?.toString() ?? null,
-          detailedReport: m.announcement.detailedReport ?? null,
-          publishedAt: m.announcement.publishedAt?.toISOString() ?? null,
-          deadlineAt: m.announcement.deadlineAt?.toISOString() ?? null,
-          valueMin: m.announcement.valueMin?.toString() ?? null,
-          valueMax: m.announcement.valueMax?.toString() ?? null,
+            announcement.llmEstimatedValue?.toString() ?? null,
+          detailedReport: announcement.detailedReport ?? null,
+          publishedAt: announcement.publishedAt?.toISOString() ?? null,
+          deadlineAt: announcement.deadlineAt?.toISOString() ?? null,
+          valueMin: announcement.valueMin?.toString() ?? null,
+          valueMax: announcement.valueMax?.toString() ?? null,
+          location: announcement.location ?? null,
+          contractingAuthority: announcement.contractingAuthority ?? null,
           isMultiPart,
-          displayPartNumber: isMultiPart ? m.announcement.partIndex + 1 : null,
+          displayPartNumber: isMultiPart ? announcement.partIndex + 1 : null,
         },
         createdAt: m.createdAt.toISOString(),
         };

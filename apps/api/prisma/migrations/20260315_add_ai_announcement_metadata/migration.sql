@@ -1,0 +1,4 @@
+ALTER TABLE "announcements"
+ADD COLUMN IF NOT EXISTS "aiTitle" TEXT,
+ADD COLUMN IF NOT EXISTS "location" TEXT,
+ADD COLUMN IF NOT EXISTS "contractingAuthority" TEXT;

@@ -157,7 +157,7 @@ export function FeaturedMatchCard({
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-bold leading-tight text-foreground sm:text-3xl">
-                {match.announcement.title}
+                {match.announcement.displayTitle ?? match.announcement.title}
               </h2>
               {match.announcement.kind && (
                 <span className="inline-flex items-center rounded-md bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-700/10">
@@ -190,16 +190,14 @@ export function FeaturedMatchCard({
         <div className="mt-10 grid grid-cols-2 gap-6 border-y border-border/60 py-6 sm:grid-cols-4">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Zamawiający</div>
-            <div className="mt-1.5 text-sm font-semibold text-foreground truncate" title="Brak danych z systemu">
-              {/* @ts-ignore - pole buyerName nie istnieje jeszcze w schemacie */}
-              {match.announcement.buyerName || "Brak danych z systemu"}
+            <div className="mt-1.5 text-sm font-semibold text-foreground truncate" title={match.announcement.contractingAuthority ?? "Brak danych z systemu"}>
+              {match.announcement.contractingAuthority || "Brak danych z systemu"}
             </div>
           </div>
           <div>
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Lokalizacja</div>
-            <div className="mt-1.5 text-sm font-semibold text-foreground truncate" title="Brak danych">
-              {/* @ts-ignore - pole buyerCity nie istnieje jeszcze w schemacie */}
-              {match.announcement.buyerCity || "Brak danych"}
+            <div className="mt-1.5 text-sm font-semibold text-foreground truncate" title={match.announcement.location ?? "Brak danych"}>
+              {match.announcement.location || "Brak danych"}
             </div>
           </div>
           <div>

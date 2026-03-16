@@ -63,6 +63,8 @@ export type ClientResponse = z.infer<typeof clientResponseSchema>;
 export const clientMatchAnnouncementSchema = z.object({
   id: z.string(),
   title: z.string(),
+  aiTitle: z.string().nullable().optional(),
+  displayTitle: z.string().optional(),
   description: z.string().nullable().optional(),
   url: z.string(),
   sourceSystem: z.string(),
@@ -72,6 +74,8 @@ export const clientMatchAnnouncementSchema = z.object({
   deadlineAt: z.string().nullable(),
   valueMin: z.string().nullable(),
   valueMax: z.string().nullable(),
+  location: z.string().nullable().optional(),
+  contractingAuthority: z.string().nullable().optional(),
   kind: z.string().nullable().optional(),
   searchContext: z.string().optional(),
   detailedReport: z.string().nullable().optional(),

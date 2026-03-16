@@ -126,6 +126,54 @@ Zasady:
 export class EmbeddingService {
   private readonly logger = new Logger(EmbeddingService.name);
 
+  private async getAnnouncementEmbeddingSource(announcementId: string): Promise<{
+    id: string;
+    title: string;
+    aiTitle: string | null;
+    description: string | null;
+    location: string | null;
+    contractingAuthority: string | null;
+    searchContext: string;
+    kind: string | null;
+    detailedReport: string | null;
+    rawData: unknown;
+    sourceSystem: AnnouncementSource;
+  }> {
+    const announcement = await this.prisma.announcement.findUnique({
+      where: { id: announcementId },
+    }) as ({
+      id: string;
+      title: string;
+      aiTitle?: string | null;
+      description: string | null;
+      location?: string | null;
+      contractingAuthority?: string | null;
+      searchContext: string;
+      kind: string | null;
+      detailedReport: string | null;
+      rawData: unknown;
+      sourceSystem: AnnouncementSource;
+    } | null);
+
+    if (!announcement) {
+      throw new NotFoundException(`Announcement not found: ${announcementId}`);
+    }
+
+    return {
+      id: announcement.id,
+      title: announcement.title,
+      aiTitle: announcement.aiTitle ?? null,
+      description: announcement.description,
+      location: announcement.location ?? null,
+      contractingAuthority: announcement.contractingAuthority ?? null,
+      searchContext: announcement.searchContext,
+      kind: announcement.kind,
+      detailedReport: announcement.detailedReport,
+      rawData: announcement.rawData,
+      sourceSystem: announcement.sourceSystem,
+    };
+  }
+
   constructor(
     @Inject(PrismaService)
     private readonly prisma: PrismaService,
@@ -142,23 +190,7 @@ export class EmbeddingService {
   async generateAnnouncementEmbedding(
     announcementId: string,
   ): Promise<{ tokenUsage: TokenUsage | null }> {
-    const announcement = await this.prisma.announcement.findUnique({
-      where: { id: announcementId },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        searchContext: true,
-        kind: true,
-        detailedReport: true,
-        rawData: true,
-        sourceSystem: true,
-      },
-    });
-
-    if (!announcement) {
-      throw new NotFoundException(`Announcement not found: ${announcementId}`);
-    }
+    const announcement = await this.getAnnouncementEmbeddingSource(announcementId);
 
     let tokenUsage: TokenUsage | null = null;
     if (!announcement.kind || !announcement.detailedReport) {
@@ -168,23 +200,7 @@ export class EmbeddingService {
       );
     }
 
-    const refreshed = await this.prisma.announcement.findUnique({
-      where: { id: announcementId },
-      select: {
-        title: true,
-        description: true,
-        searchContext: true,
-        kind: true,
-        detailedReport: true,
-        rawData: true,
-        sourceSystem: true,
-      },
-    });
-
-    if (!refreshed)
-      throw new NotFoundException(
-        `Announcement not found after analysis: ${announcementId}`,
-      );
+    const refreshed = await this.getAnnouncementEmbeddingSource(announcementId);
 
     await this.buildAndSaveEmbedding(announcementId, refreshed);
     return { tokenUsage };
@@ -293,7 +309,10 @@ export class EmbeddingService {
     announcementId: string,
     data: {
       title: string;
+      aiTitle: string | null;
       description: string | null;
+      location: string | null;
+      contractingAuthority: string | null;
       searchContext: string;
       kind: string | null;
       detailedReport: string | null;
@@ -302,8 +321,10 @@ export class EmbeddingService {
     },
   ): Promise<void> {
     const embeddingInput = this.buildEmbeddingInput({
-      title: data.title,
+      title: data.aiTitle ?? data.title,
       description: data.description,
+      location: data.location,
+      contractingAuthority: data.contractingAuthority,
       kind: (data.kind ?? "INNE") as AnnouncementKind,
       detailedReport: data.detailedReport,
       searchContext: data.searchContext,
@@ -466,6 +487,8 @@ export class EmbeddingService {
   private buildEmbeddingInput(input: {
     title: string;
     description: string | null;
+    location: string | null;
+    contractingAuthority: string | null;
     kind: AnnouncementKind;
     detailedReport: string | null;
     searchContext: string;
@@ -485,6 +508,8 @@ export class EmbeddingService {
     return [
       `RODZAJ: ${KIND_LABELS[input.kind]}`,
       compactTitle ? `TYTUŁ: ${compactTitle}` : null,
+      input.contractingAuthority ? `ZAMAWIAJĄCY: ${input.contractingAuthority}` : null,
+      input.location ? `LOKALIZACJA: ${input.location}` : null,
       compactDescription ? `OPIS: ${compactDescription}` : null,
       compactReport ? `RAPORT:\n${compactReport}` : null,
       `KONTEKST: ${compactContext}`,

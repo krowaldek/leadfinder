@@ -121,7 +121,11 @@ interface Props {
 export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
   if (!match) return null;
 
-  const ann = match.announcement;
+  const ann = match.announcement as typeof match.announcement & {
+    displayTitle?: string;
+    location?: string | null;
+    contractingAuthority?: string | null;
+  };
   const topic = match.topic;
   const parsedCtx = ann.searchContext ? parseSearchContext(ann.searchContext) : null;
 
@@ -129,7 +133,7 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-xl">
         <SheetHeader className="px-6 pb-4 pt-6">
-          <SheetTitle className="text-base leading-snug">{ann.title}</SheetTitle>
+          <SheetTitle className="text-base leading-snug">{ann.displayTitle ?? ann.title}</SheetTitle>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             {ann.kind && (
               <Badge variant="outline" className="text-xs">{KIND_LABELS[ann.kind] ?? ann.kind}</Badge>
@@ -252,6 +256,12 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
           {/* Szczegóły ogłoszenia */}
           <Section title="Szczegóły ogłoszenia">
             <div className="grid gap-1.5">
+              {ann.contractingAuthority && (
+                <Field label="Zamawiający" value={ann.contractingAuthority} />
+              )}
+              {ann.location && (
+                <Field label="Lokalizacja" value={ann.location} />
+              )}
               {ann.publishedAt && (
                 <Field
                   label="Opublikowano"

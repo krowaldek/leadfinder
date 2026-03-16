@@ -2,6 +2,7 @@ import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { z } from "zod";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
 import {
@@ -150,6 +151,27 @@ function extractMessageText(content: unknown): string {
   return "";
 }
 
+const REPORT_METADATA_SCHEMA = z.object({
+  suggestedTitle: z.string().trim().min(6).max(220).nullable().optional(),
+  location: z.string().trim().min(2).max(220).nullable().optional(),
+  contractingAuthority: z.string().trim().min(2).max(220).nullable().optional(),
+});
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized ? normalized : null;
+}
+
+function isWeakAnnouncementTitle(title: string | null | undefined): boolean {
+  const normalized = normalizeOptionalText(title)?.toLowerCase() ?? "";
+  if (!normalized || normalized.length < 16) return true;
+  if (/^(część|pakiet|zadanie)\s*\d+([a-z])?$/i.test(normalized)) return true;
+  if (/^(część|pakiet|zadanie)\s*\d+([a-z])?\b/i.test(normalized) && normalized.split(" ").length <= 5) {
+    return true;
+  }
+  return false;
+}
+
 @Injectable()
 export class AnnouncementReportService {
   private readonly logger = new Logger(AnnouncementReportService.name);
@@ -246,6 +268,11 @@ export class AnnouncementReportService {
       searchContext: announcement.searchContext,
     });
     const locationContext = this.extractLocationContext(announcement.sourceSystem, rawData, {
+      title: announcement.title,
+      description: announcement.description,
+      searchContext: announcement.searchContext,
+    });
+    const authorityContext = this.extractContractingAuthorityContext(announcement.sourceSystem, rawData, {
       title: announcement.title,
       description: announcement.description,
       searchContext: announcement.searchContext,
@@ -357,13 +384,32 @@ export class AnnouncementReportService {
     }
 
     // ── 4. Zapisz wynik ──────────────────────────────────────────────────────
-    await this.prisma.announcement.update({
-      where: { id: announcementId },
-      data: {
+    const metadata = await this.resolveAnnouncementMetadata(
+      {
+        title: announcement.title,
+        description: announcement.description,
+        searchContext: announcement.searchContext,
         detailedReport: report,
-        embeddingStatus: "PENDING",
       },
-    });
+      rawData,
+      locationContext,
+      authorityContext,
+    );
+
+    const aiTitle = metadata.suggestedTitle && isWeakAnnouncementTitle(announcement.title)
+      ? metadata.suggestedTitle
+      : null;
+
+    await this.prisma.$executeRaw`
+      UPDATE announcements
+      SET
+        "detailedReport" = ${report},
+        "aiTitle" = COALESCE(${aiTitle}, "aiTitle"),
+        location = COALESCE(location, ${metadata.location}),
+        "contractingAuthority" = COALESCE("contractingAuthority", ${metadata.contractingAuthority}),
+        "embeddingStatus" = 'PENDING'::"EmbeddingStatus"
+      WHERE id = ${announcementId}::uuid
+    `;
 
     await this.embeddingService.enqueueAnnouncementEmbedding(announcementId);
 
@@ -390,6 +436,9 @@ export class AnnouncementReportService {
           reportLength: report.length,
           attachmentsProcessed: attachmentTexts.length,
           llmUsed,
+          aiTitle: aiTitle ?? null,
+          location: metadata.location,
+          contractingAuthority: metadata.contractingAuthority,
           reembedQueued: true,
           previousEmbeddingStatus: announcement.embeddingStatus,
           aiOperations,
@@ -496,6 +545,36 @@ export class AnnouncementReportService {
     return unique.length > 0 ? unique.join(" | ") : null;
   }
 
+  private extractContractingAuthorityContext(
+    sourceSystem: string,
+    rawData: ReportRawData | null,
+    announcement: { title: string; description: string | null; searchContext: string },
+  ): string | null {
+    const candidates = [
+      sourceSystem === "E_ZAMOWIENIA" ? rawData?.organizationName : null,
+      sourceSystem === "PLATFORMA_ZAKUPOWA" ? rawData?.firma_wystawiajaca : null,
+      this.extractAuthorityFromSearchContext(announcement.searchContext),
+    ]
+      .map((value) => this.cleanLocationValue(value))
+      .filter((value, index, array): value is string => !!value && array.indexOf(value) === index);
+
+    return candidates[0] ?? null;
+  }
+
+  private extractAuthorityFromSearchContext(searchContext: string): string | null {
+    if (!searchContext) return null;
+
+    const part = searchContext
+      .split("|")
+      .map((item) => item.trim())
+      .find((item) => /^zamawiający:|^zamawiajacy:/i.test(item));
+
+    if (!part) return null;
+
+    const value = part.split(":").slice(1).join(":").trim();
+    return this.cleanLocationValue(value);
+  }
+
   private extractLocationFromSearchContext(searchContext: string): string | null {
     if (!searchContext) return null;
 
@@ -511,6 +590,101 @@ export class AnnouncementReportService {
     if (typeof value !== "string") return null;
     const normalized = value.replace(/\s+/g, " ").trim();
     return normalized.length > 0 ? normalized : null;
+  }
+
+  private buildTitleSuggestionFromRawData(
+    currentTitle: string,
+    rawData: ReportRawData | null,
+  ): string | null {
+    if (!isWeakAnnouncementTitle(currentTitle)) {
+      return null;
+    }
+
+    const orders = Array.isArray(rawData?.orders) ? rawData.orders : [];
+    const informativeTitles = orders
+      .map((order) => normalizeOptionalText(order.title))
+      .filter((value): value is string => !!value && value.length >= 12);
+
+    if (informativeTitles.length === 1) {
+      return informativeTitles[0];
+    }
+
+    if (informativeTitles.length > 1) {
+      return informativeTitles.slice(0, 2).join(" / ").slice(0, 220);
+    }
+
+    return null;
+  }
+
+  private async resolveAnnouncementMetadata(
+    announcement: {
+      title: string;
+      description: string | null;
+      searchContext: string;
+      detailedReport: string;
+    },
+    rawData: ReportRawData | null,
+    locationContext: string | null,
+    authorityContext: string | null,
+  ): Promise<{
+    suggestedTitle: string | null;
+    location: string | null;
+    contractingAuthority: string | null;
+  }> {
+    const fallback = {
+      suggestedTitle: this.buildTitleSuggestionFromRawData(announcement.title, rawData),
+      location: locationContext,
+      contractingAuthority: authorityContext,
+    };
+
+    const apiKey = this.config.get<string>("OPENAI_API_KEY");
+    if (!apiKey) {
+      return fallback;
+    }
+
+    try {
+      const model = this.config.get("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      const llm = new ChatOpenAI({
+        apiKey,
+        model,
+        maxTokens: 700,
+        ...(model.startsWith("gpt-5") ? { reasoningEffort: "low" } : { temperature: 0 }),
+        modelKwargs: { response_format: { type: "json_object" } },
+      });
+
+      const response = await llm.invoke([
+        new SystemMessage(`Jesteś analitykiem ogłoszeń przetargowych. Na podstawie treści ogłoszenia i raportu zwróć WYŁĄCZNIE JSON:
+{
+  "suggestedTitle": "krótki i informacyjny tytuł po polsku albo null",
+  "location": "lokalizacja realizacji/dostawy albo null",
+  "contractingAuthority": "zamawiający albo null"
+}
+
+Zasady:
+- suggestedTitle popraw tylko wtedy, gdy obecny tytuł jest mało informacyjny lub nieprecyzyjny,
+- location i contractingAuthority podaj tylko jeśli wynikają z danych,
+- niczego nie wymyślaj; przy niepewności zwróć null.`),
+        new HumanMessage([
+          `TYTUŁ: ${announcement.title}`,
+          announcement.description ? `OPIS: ${announcement.description}` : null,
+          announcement.searchContext ? `KONTEKST: ${announcement.searchContext}` : null,
+          fallback.location ? `LOKALIZACJA_HEURYSTYCZNA: ${fallback.location}` : null,
+          fallback.contractingAuthority ? `ZAMAWIAJĄCY_HEURYSTYCZNY: ${fallback.contractingAuthority}` : null,
+          `RAPORT: ${announcement.detailedReport.slice(0, 5000)}`,
+        ].filter(Boolean).join("\n")),
+      ]);
+
+      const parsed = REPORT_METADATA_SCHEMA.parse(JSON.parse(extractMessageText(response.content) || String(response.content)));
+
+      return {
+        suggestedTitle: normalizeOptionalText(parsed.suggestedTitle) ?? fallback.suggestedTitle,
+        location: normalizeOptionalText(parsed.location) ?? fallback.location,
+        contractingAuthority: normalizeOptionalText(parsed.contractingAuthority) ?? fallback.contractingAuthority,
+      };
+    } catch (error) {
+      this.logger.warn(`Report metadata extraction failed: ${error instanceof Error ? error.message : String(error)}`);
+      return fallback;
+    }
   }
 
   private buildItemsContext(

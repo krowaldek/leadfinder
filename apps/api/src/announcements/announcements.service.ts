@@ -40,8 +40,9 @@ export class AnnouncementsService {
 
     type Row = {
       id: string; sourceSystem: string; externalId: string; partIndex: number;
-      title: string; description: string | null; url: string; status: string;
+      title: string; aiTitle: string | null; displayTitle: string; description: string | null; url: string; status: string;
       kind: string | null; embeddingStatus: string;
+      location: string | null; contractingAuthority: string | null;
       valueMin: string | null; valueMax: string | null; llmEstimatedValue: string | null;
       publishedAt: Date | null; deadlineAt: Date | null;
       createdAt: Date; updatedAt: Date;
@@ -51,7 +52,8 @@ export class AnnouncementsService {
       this.prisma.$queryRaw<Row[]>(Prisma.sql`
         SELECT
           id, "sourceSystem", "externalId", "partIndex",
-          title, description, url, status, kind, "embeddingStatus",
+          title, "aiTitle", COALESCE("aiTitle", title) AS "displayTitle", description, url, status, kind, "embeddingStatus",
+          location, "contractingAuthority",
           "valueMin"::text AS "valueMin",
           "valueMax"::text AS "valueMax",
           "llmEstimatedValue"::text AS "llmEstimatedValue",
@@ -80,39 +82,68 @@ export class AnnouncementsService {
   }
 
   async findOne(id: string) {
-    const a = await this.prisma.announcement.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        sourceSystem: true,
-        externalId: true,
-        partIndex: true,
-        title: true,
-        description: true,
-        searchContext: true,
-        url: true,
-        status: true,
-        kind: true,
-        embeddingStatus: true,
-        valueMin: true,
-        valueMax: true,
-        llmEstimatedValue: true,
-        detailedReport: true,
-        publishedAt: true,
-        deadlineAt: true,
-        rawData: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    type AnnouncementRow = {
+      id: string;
+      sourceSystem: string;
+      externalId: string;
+      partIndex: number;
+      title: string;
+      aiTitle: string | null;
+      displayTitle: string;
+      description: string | null;
+      searchContext: string;
+      url: string;
+      status: string;
+      kind: string | null;
+      embeddingStatus: string;
+      valueMin: string | null;
+      valueMax: string | null;
+      llmEstimatedValue: string | null;
+      detailedReport: string | null;
+      publishedAt: Date | null;
+      deadlineAt: Date | null;
+      location: string | null;
+      contractingAuthority: string | null;
+      rawData: unknown;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+
+    const rows = await this.prisma.$queryRaw<AnnouncementRow[]>(Prisma.sql`
+      SELECT
+        id,
+        "sourceSystem",
+        "externalId",
+        "partIndex",
+        title,
+        "aiTitle",
+        COALESCE("aiTitle", title) AS "displayTitle",
+        description,
+        "searchContext",
+        url,
+        status,
+        kind,
+        "embeddingStatus",
+        "valueMin"::text AS "valueMin",
+        "valueMax"::text AS "valueMax",
+        "llmEstimatedValue"::text AS "llmEstimatedValue",
+        "detailedReport",
+        "publishedAt",
+        "deadlineAt",
+        location,
+        "contractingAuthority",
+        "rawData",
+        "createdAt",
+        "updatedAt"
+      FROM announcements
+      WHERE id = ${id}::uuid
+      LIMIT 1
+    `);
+
+    const a = rows[0] ?? null;
 
     if (!a) throw new NotFoundException("Announcement not found");
 
-    return {
-      ...a,
-      valueMin: a.valueMin != null ? a.valueMin.toString() : null,
-      valueMax: a.valueMax != null ? a.valueMax.toString() : null,
-      llmEstimatedValue: a.llmEstimatedValue != null ? a.llmEstimatedValue.toString() : null,
-    };
+    return a;
   }
 }

@@ -277,7 +277,12 @@ export function AnnouncementsPage() {
         accessorFn: (a) => a,
         cell: ({ row }) => (
           <div className="max-w-[420px]">
-            <div className="line-clamp-2 font-medium">{row.title}</div>
+            <div className="line-clamp-2 font-medium">{row.displayTitle ?? row.title}</div>
+            {(row.contractingAuthority || row.location) ? (
+              <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                {[row.contractingAuthority, row.location].filter(Boolean).join(" · ")}
+              </div>
+            ) : null}
             {row.description ? (
               <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                 {row.description}

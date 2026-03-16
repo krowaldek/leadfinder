@@ -15,6 +15,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Announcement } from "@leadfinder/contracts";
 import { fetchAnnouncement, generateAnnouncementReport } from "@/features/announcements/announcements-api";
 
+type ExtendedAnnouncement = Announcement & {
+  displayTitle?: string;
+  location?: string | null;
+  contractingAuthority?: string | null;
+};
+
 interface AnnouncementReportDialogProps {
   announcement: Announcement | null;
   open: boolean;
@@ -41,9 +47,15 @@ export function AnnouncementReportDialog({
     enabled: open && Boolean(announcement?.id),
   });
 
-  const resolvedAnnouncement = announcementQuery.data?.data ?? announcement;
+  const resolvedAnnouncement = (announcementQuery.data?.data ?? announcement) as ExtendedAnnouncement | null;
   const report = localReport ?? resolvedAnnouncement?.detailedReport ?? null;
   const baseDescription = [
+    resolvedAnnouncement?.contractingAuthority?.trim()
+      ? `## Zamawiający\n${resolvedAnnouncement.contractingAuthority.trim()}`
+      : null,
+    resolvedAnnouncement?.location?.trim()
+      ? `## Lokalizacja\n${resolvedAnnouncement.location.trim()}`
+      : null,
     resolvedAnnouncement?.description?.trim() ?? null,
     resolvedAnnouncement?.searchContext?.trim()
       ? `## Kontekst bazowy\n${resolvedAnnouncement.searchContext.trim()}`
@@ -93,7 +105,7 @@ export function AnnouncementReportDialog({
           </DialogTitle>
           {resolvedAnnouncement && (
             <DialogDescription className="text-sm">
-              {resolvedAnnouncement.title}
+              {resolvedAnnouncement.displayTitle ?? resolvedAnnouncement.title}
             </DialogDescription>
           )}
         </DialogHeader>

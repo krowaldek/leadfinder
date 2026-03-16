@@ -113,6 +113,7 @@ model Announcement {
   /// 0 for single-part tenders; 0, 1, 2 … for each lot/part of a multi-part tender.
   partIndex         Int                @default(0)
   title             String
+  aiTitle           String?            @db.Text
   description       String?            @db.Text
   url               String
   status            AnnouncementStatus @default(OPEN)
@@ -120,6 +121,8 @@ model Announcement {
   valueMax          Decimal?           @db.Decimal(15, 2)
   publishedAt       DateTime?
   deadlineAt        DateTime?
+  location          String?            @db.Text
+  contractingAuthority String?         @db.Text
   /// Condensed text used as embedding input (title + description + CPV codes etc.)
   searchContext     String             @default("") @db.Text
   kind              AnnouncementKind?
