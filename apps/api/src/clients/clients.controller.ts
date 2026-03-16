@@ -262,6 +262,17 @@ export class ClientsController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "ADMIN")
+  @Get(":id/projects/:projectId/topics/:topicId/matching-debug")
+  async getTopicMatchingDebug(
+    @Param("id") clientId: string,
+    @Param("projectId") projectId: string,
+    @Param("topicId") topicId: string,
+  ) {
+    return this.clientsService.getTopicMatchingDebug(clientId, projectId, topicId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "ADMIN")
   @Post(":id/projects/:projectId/topics/:topicId/embed")
   async embedTopic(
     @Param("id") _clientId: string,

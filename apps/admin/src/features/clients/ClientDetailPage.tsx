@@ -1,69 +1,70 @@
-import { useParams, Link } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { toast } from "sonner";
-import {
-  ChevronDown,
-  ChevronRight,
-  Cpu,
-  FileSearch,
-  Loader2,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Sparkles,
-  Trash2,
-  X,
-} from "lucide-react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  announcementKindSchema,
-  createProjectSchema,
-  createTopicSchema,
-  topicMatchingProfileSchema,
-  updateProjectSchema,
-  updateTopicSchema,
-  type AnnouncementKind,
-  type CreateProject,
-  type CreateTopic,
-  type ProjectListItem,
-  type TopicMatchingProfile,
-  type Topic,
-  type UpdateProject,
-  type UpdateTopic,
-} from "@leadfinder/contracts";
-import {
-  createProject,
-  createTopic,
-  deleteProject,
-  deleteTopic,
-  embedTopic,
-  fetchClient,
-  fetchProjects,
-  fetchTopics,
-  generateTopicPrompt,
-  rematchClient,
-  updateProject,
-  updateTopic,
-} from "./clients-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+    announcementKindSchema,
+    createProjectSchema,
+    createTopicSchema,
+    topicMatchingProfileSchema,
+    updateProjectSchema,
+    updateTopicSchema,
+    type AnnouncementKind,
+    type CreateProject,
+    type CreateTopic,
+    type ProjectListItem,
+    type Topic,
+    type TopicMatchingProfile,
+    type UpdateProject,
+    type UpdateTopic,
+} from "@leadfinder/contracts";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useParams } from "@tanstack/react-router";
+import {
+    ChevronDown,
+    ChevronRight,
+    Cpu,
+    FileSearch,
+    Loader2,
+    Pencil,
+    Plus,
+    RefreshCw,
+    Sparkles,
+    Trash2,
+    X
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
+import {
+    createProject,
+    createTopic,
+    deleteProject,
+    deleteTopic,
+    embedTopic,
+    fetchClient,
+    fetchProjects,
+    fetchTopicMatchingDebug,
+    fetchTopics,
+    generateTopicPrompt,
+    rematchClient,
+    updateProject,
+    updateTopic
+} from "./clients-api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -94,6 +95,22 @@ function embeddingStatusVariant(status: string): BadgeVariant {
   if (status === "EMBEDDED") return "default";
   if (status === "ERROR") return "destructive";
   return "outline"; // PENDING
+}
+
+function formatScore(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "—";
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
+async function fetchTopicMatchingDebugReport(
+  clientId: string,
+  projectId: string,
+  topicId: string,
+) {
+  return fetchTopicMatchingDebug(clientId, projectId, topicId);
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +620,14 @@ function TopicRow({
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+
+  const debugQuery = useQuery({
+    queryKey: ["topic-matching-debug", clientId, projectId, topic.id],
+    queryFn: () => fetchTopicMatchingDebugReport(clientId, projectId, topic.id),
+    enabled: debugOpen,
+    staleTime: 30_000,
+  });
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteTopic(clientId, projectId, topic.id),
@@ -628,6 +653,20 @@ function TopicRow({
     onError: () => toast.error("Nie udało się zakolejkować embeddingu"),
   });
 
+  const debugReport = debugQuery.data?.data;
+  const pipelineCandidates = (debugReport?.vectorCandidates ?? debugReport?.rawVectorHits ?? []);
+  const finalMatches = debugReport?.finalMatches ?? [];
+  const [compareCandidateId, setCompareCandidateId] = useState<string | null>(null);
+
+  const compareCandidate = useMemo(
+    () =>
+      pipelineCandidates.find((candidate) => candidate.announcementId === compareCandidateId) ?? null,
+    [pipelineCandidates, compareCandidateId],
+  );
+
+  const topicVectorText = debugReport?.topic.vectorText ?? debugReport?.topic.prompt ?? topic.prompt;
+  const announcementVectorText = compareCandidate?.announcementVectorText ?? "Brak tekstu ogłoszenia do porównania.";
+
   return (
     <>
       <div className="rounded-md border text-sm">
@@ -643,6 +682,16 @@ function TopicRow({
             )}
           </div>
           <div className="ml-3 flex shrink-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-xs"
+              title="Pokaż debug matching"
+              onClick={() => setDebugOpen(true)}
+            >
+              <FileSearch className="size-3.5" />
+              Debug matching
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -718,10 +767,88 @@ function TopicRow({
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Usuń temat"
-        description={`Czy na pewno chcesz usunąć temat „${topic.title}"? Ta akcja jest nieodwracalna.`}
+        description={`Czy na pewno chcesz usunąć temat „${topic.title}”? Ta akcja jest nieodwracalna.`}
         onConfirm={() => deleteMutation.mutate()}
         isPending={deleteMutation.isPending}
       />
+
+      <Dialog
+        open={compareCandidateId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCompareCandidateId(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-6xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>
+              Porównanie dopasowania
+              {compareCandidate ? ` — ${compareCandidate.title}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="grid h-[60vh] gap-4 overflow-hidden lg:grid-cols-2">
+            <div className="flex min-h-0 h-full flex-col rounded-lg border">
+              <div className="border-b px-4 py-3">
+                <p className="font-medium">Tekst tematu</p>
+                <p className="text-xs text-muted-foreground">
+                  Treść tematu używana do dopasowania i wektoryzacji.
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                  {topicVectorText}
+                </pre>
+              </div>
+            </div>
+
+            <div className="flex min-h-0 h-full flex-col rounded-lg border">
+              <div className="border-b px-4 py-3">
+                <p className="font-medium">Tekst ogłoszenia</p>
+                <p className="text-xs text-muted-foreground">
+                  Tekst ogłoszenia używany do dopasowania i wektoryzacji.
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                  {announcementVectorText}
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          {compareCandidate ? (
+            <div className="grid gap-3 md:grid-cols-6">
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Stage</p>
+                <p className="mt-1 text-sm font-semibold">{compareCandidate.stage ?? "PIPELINE"}</p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Semantic</p>
+                <p className="mt-1 text-sm font-semibold">{formatScore(compareCandidate.semantic)}</p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Keyword</p>
+                <p className="mt-1 text-sm font-semibold">{formatScore(compareCandidate.keyword)}</p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Domain</p>
+                <p className="mt-1 text-sm font-semibold">{formatScore(compareCandidate.domain)}</p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Hybrid</p>
+                <p className="mt-1 text-sm font-semibold">{formatScore(compareCandidate.hybrid)}</p>
+              </div>
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Final</p>
+                <p className="mt-1 text-sm font-semibold">{formatScore(compareCandidate.final)}</p>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={promptOpen} onOpenChange={setPromptOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -773,6 +900,227 @@ function TopicRow({
                   ))}
                 </div>
               </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
+        <DialogContent className="max-h-[90vh] max-w-7xl overflow-hidden">
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <DialogTitle>Debug matching — {topic.title}</DialogTitle>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Podgląd kandydatów z wektora, etapów pre-rerank, rerank i finalnych matchy.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void debugQuery.refetch()}
+                disabled={debugQuery.isFetching}
+              >
+                <RefreshCw className={debugQuery.isFetching ? "size-3.5 animate-spin" : "size-3.5"} />
+                Odśwież
+              </Button>
+            </div>
+          </DialogHeader>
+
+          <div className="grid gap-4 overflow-hidden">
+            {debugQuery.isLoading ? (
+              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Ładowanie debug matching…
+              </div>
+            ) : debugQuery.isError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                Nie udało się pobrać raportu debug matching.
+              </div>
+            ) : debugReport ? (
+              <>
+                <div className="grid gap-3 md:grid-cols-6">
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Stored matches</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.storedMatches}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Vector</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.vectorCandidates}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pre-rerank</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.rerankCandidates}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Rerank window</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.reranked}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Shortlisted</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.shortlisted}</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Dismissed</p>
+                    <p className="mt-1 text-2xl font-semibold">{debugReport.summary.dismissed}</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 overflow-hidden">
+                  <div className="rounded-lg border">
+                    <div className="border-b px-4 py-3">
+                      <p className="font-medium">Matching pipeline</p>
+                      <p className="text-xs text-muted-foreground">
+                        Jedna tabela z kandydatami pipeline, scoringiem, etapem przejścia i powodami odrzucenia.
+                      </p>
+                    </div>
+                    <div className="max-h-[420px] overflow-auto">
+                      <table className="w-full min-w-[1500px] text-sm">
+                        <thead className="sticky top-0 bg-background">
+                          <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                            <th className="px-3 py-2">Ogłoszenie</th>
+                            <th className="px-3 py-2">Stage</th>
+                            <th className="px-3 py-2">Semantic</th>
+                            <th className="px-3 py-2">Keyword</th>
+                            <th className="px-3 py-2">Domain</th>
+                            <th className="px-3 py-2">Hybrid</th>
+                            <th className="px-3 py-2">Rerank</th>
+                            <th className="px-3 py-2">Final</th>
+                            <th className="px-3 py-2">Filtry</th>
+                            <th className="px-3 py-2">Rerank flow</th>
+                            <th className="px-3 py-2">Powody odrzucenia</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pipelineCandidates.map((candidate) => (
+                            <tr key={candidate.announcementId} className="border-b align-top">
+                              <td className="px-3 py-3">
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    className="text-left font-medium leading-snug underline-offset-4 hover:underline"
+                                    onClick={() => setCompareCandidateId(candidate.announcementId)}
+                                  >
+                                    {candidate.title}
+                                  </button>
+                                  <p className="font-mono text-[11px] text-muted-foreground">
+                                    {candidate.announcementId}
+                                  </p>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                <Badge variant="outline" className="text-[10px]">
+                                  {candidate.stage ?? "PIPELINE"}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.semantic)}</td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.keyword)}</td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.domain)}</td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.hybrid)}</td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.rerank)}</td>
+                              <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.final)}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <Badge variant={candidate.keptAfterFilters ? "secondary" : "outline"} className="text-[10px]">
+                                    {candidate.keptAfterFilters ? "przeszedł pre-rerank" : "odrzucony przed rerank"}
+                                  </Badge>
+                                  {candidate.negativePenaltyApplied ? (
+                                    <Badge variant="outline" className="text-[10px]">
+                                      negative penalty
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <Badge variant={candidate.sentToRerank ? "secondary" : "outline"} className="text-[10px]">
+                                    {candidate.sentToRerank ? "poszedł do rerank" : "bez rerank"}
+                                  </Badge>
+                                  <Badge variant={candidate.keptAfterRerank ? "secondary" : "outline"} className="text-[10px]">
+                                    {candidate.keptAfterRerank ? "został po rerank" : "odrzucony po rerank"}
+                                  </Badge>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                {candidate.rejectionReasons.length ? (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {candidate.rejectionReasons.map((reason) => (
+                                      <Badge key={reason} variant="outline" className="text-[10px]">
+                                        {reason}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border">
+                    <div className="border-b px-4 py-3">
+                      <p className="font-medium">Final matches</p>
+                      <p className="text-xs text-muted-foreground">
+                        Końcowe zapisane dopasowania po całym pipeline.
+                      </p>
+                    </div>
+                    <div className="max-h-[220px] overflow-auto">
+                      <table className="w-full min-w-[900px] text-sm">
+                        <thead className="sticky top-0 bg-background">
+                          <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                            <th className="px-3 py-2">Ogłoszenie</th>
+                            <th className="px-3 py-2">Status</th>
+                            <th className="px-3 py-2">Similarity</th>
+                            <th className="px-3 py-2">Źródło</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {finalMatches.length > 0 ? (
+                            finalMatches.map((match) => (
+                              <tr key={match.id} className="border-b align-top">
+                                <td className="px-3 py-3">
+                                  <div className="space-y-1">
+                                    <p className="font-medium leading-snug">{match.announcement.title}</p>
+                                    <p className="font-mono text-[11px] text-muted-foreground">
+                                      {match.announcement.id}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <Badge variant="outline" className="text-[10px]">
+                                    {match.status}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-3 font-mono text-xs">
+                                  {formatScore(match.similarity)}
+                                </td>
+                                <td className="px-3 py-3 text-xs text-muted-foreground">
+                                  {match.announcement.sourceSystem ?? "—"}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td className="px-3 py-6 text-sm text-muted-foreground" colSpan={4}>
+                                Brak finalnych dopasowań.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="py-8 text-sm text-muted-foreground">
+                Brak danych debug matching dla tego tematu.
+              </div>
             )}
           </div>
         </DialogContent>
