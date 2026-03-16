@@ -1,10 +1,13 @@
-import { Controller, Get, HttpCode, Inject, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, UseGuards } from "@nestjs/common";
 import {
   AnnouncementsListQuery,
   announcementsListQuerySchema,
+  internalAnnouncementPromptRequestSchema,
+  type InternalAnnouncementPromptRequest,
 } from "@leadfinder/contracts";
 import { AnnouncementsService } from "./announcements.service.js";
 import { AnnouncementReportService } from "./announcement-report.service.js";
+import { InternalAnnouncementPromptService } from "./internal-announcement-prompt.service.js";
 import { JwtAuthGuard } from "../common/jwt-auth.guard.js";
 import { RolesGuard } from "../common/roles.guard.js";
 import { Roles } from "../common/roles.decorator.js";
@@ -19,7 +22,18 @@ export class AnnouncementsController {
     private readonly announcementsService: AnnouncementsService,
     @Inject(AnnouncementReportService)
     private readonly reportService: AnnouncementReportService,
+    @Inject(InternalAnnouncementPromptService)
+    private readonly internalPromptService: InternalAnnouncementPromptService,
   ) {}
+
+  @Post("internal/prompt")
+  @HttpCode(200)
+  async processInternalPrompt(
+    @Body(new ZodValidationPipe(internalAnnouncementPromptRequestSchema))
+    body: InternalAnnouncementPromptRequest,
+  ) {
+    return this.internalPromptService.processMessage(body.sessionId, body.message);
+  }
 
   @Get()
   async findAll(

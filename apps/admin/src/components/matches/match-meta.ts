@@ -24,6 +24,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   BAZA_KONKURENCYJNOSCI: "Baza Konkurencyjności",
   E_ZAMOWIENIA: "e-Zamówienia",
   PLATFORMA_ZAKUPOWA: "Platforma Zakupowa",
+  INTERNAL: "Wewnętrzne",
 };
 
 type PartAwareAnnouncement = {
@@ -34,6 +35,8 @@ type PartAwareAnnouncement = {
 };
 
 type SourceAwareAnnouncement = PartAwareAnnouncement & {
+  id: string;
+  externalId: string;
   url: string;
   sourceSystem: string;
   title: string;
@@ -70,6 +73,10 @@ export function getAnnouncementPartLabel(
 export function getAnnouncementSourceCtaLabel(
   announcement: PartAwareAnnouncement,
 ) {
+  if (announcement.sourceSystem === "INTERNAL") {
+    return "Otwórz w panelu";
+  }
+
   const partLabel = getAnnouncementPartLabel(announcement);
   return partLabel ? `Przejdź do [${partLabel.toLocaleLowerCase("pl-PL")}]` : "Przejdź do oferty";
 }
@@ -77,6 +84,15 @@ export function getAnnouncementSourceCtaLabel(
 export function buildAnnouncementSourceHref(
   announcement: SourceAwareAnnouncement,
 ) {
+  if (announcement.sourceSystem === "INTERNAL") {
+    return buildAnnouncementPanelHref({
+      id: announcement.id,
+      externalId: announcement.externalId,
+      sourceSystem: announcement.sourceSystem,
+      partIndex: announcement.partIndex ?? 0,
+    });
+  }
+
   if (
     announcement.sourceSystem !== "BAZA_KONKURENCYJNOSCI"
     || !announcement.isMultiPart

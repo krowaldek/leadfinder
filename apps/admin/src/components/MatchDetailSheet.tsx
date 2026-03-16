@@ -35,6 +35,7 @@ const SOURCE_LABELS: Record<string, string> = {
   BAZA_KONKURENCYJNOSCI: "Baza Konkurencyjności",
   E_ZAMOWIENIA: "e-Zamówienia",
   PLATFORMA_ZAKUPOWA: "Platforma Zakupowa",
+  INTERNAL: "Wewnętrzne",
 };
 
 // ── Pomocnicze ───────────────────────────────────────────────────────────────
@@ -150,11 +151,11 @@ export function MatchDetailSheet({ match, open, onOpenChange }: Props) {
             </a>
             <a
               href={ann.url}
-              target="_blank"
-              rel="noreferrer"
+              target={ann.sourceSystem === "INTERNAL" ? undefined : "_blank"}
+              rel={ann.sourceSystem === "INTERNAL" ? undefined : "noreferrer"}
               className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
             >
-              Otwórz <ExternalLink className="size-3" />
+              {ann.sourceSystem === "INTERNAL" ? "Otwórz w panelu" : "Otwórz"} <ExternalLink className="size-3" />
             </a>
           </div>
         </SheetHeader>

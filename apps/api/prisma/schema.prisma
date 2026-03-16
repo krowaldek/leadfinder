@@ -78,6 +78,7 @@ enum AnnouncementSource {
   BAZA_KONKURENCYJNOSCI
   E_ZAMOWIENIA
   PLATFORMA_ZAKUPOWA
+  INTERNAL
 }
 
 enum AnnouncementStatus {

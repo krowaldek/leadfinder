@@ -5,8 +5,17 @@ export const announcementSourceSchema = z.enum([
   "BAZA_KONKURENCYJNOSCI",
   "E_ZAMOWIENIA",
   "PLATFORMA_ZAKUPOWA",
+  "INTERNAL",
 ]);
 export type AnnouncementSource = z.infer<typeof announcementSourceSchema>;
+
+export const internalAnnouncementPromptRequestSchema = z.object({
+  sessionId: z.string().optional(),
+  message: z.string().trim().min(1).max(4000),
+});
+export type InternalAnnouncementPromptRequest = z.infer<
+  typeof internalAnnouncementPromptRequestSchema
+>;
 
 export const announcementStatusSchema = z.enum([
   "OPEN",
@@ -58,6 +67,26 @@ export const announcementSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 export type Announcement = z.infer<typeof announcementSchema>;
+
+export const internalAnnouncementPromptQuestionResponseSchema = z.object({
+  status: z.literal("question"),
+  sessionId: z.string(),
+  question: z.string(),
+  collectedData: z.record(z.string(), z.unknown()),
+});
+
+export const internalAnnouncementPromptCreatedResponseSchema = z.object({
+  status: z.literal("created"),
+  announcement: z.lazy(() => announcementSchema),
+});
+
+export const internalAnnouncementPromptResponseSchema = z.discriminatedUnion("status", [
+  internalAnnouncementPromptQuestionResponseSchema,
+  internalAnnouncementPromptCreatedResponseSchema,
+]);
+export type InternalAnnouncementPromptResponse = z.infer<
+  typeof internalAnnouncementPromptResponseSchema
+>;
 
 export const announcementsListQuerySchema = listQuerySchema.extend({
   source: announcementSourceSchema.optional(),

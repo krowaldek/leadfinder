@@ -1,0 +1,1 @@
+ALTER TYPE "AnnouncementSource" ADD VALUE IF NOT EXISTS 'INTERNAL';

@@ -27,14 +27,18 @@ import {
 } from "@/components/RawDataDialog";
 import { AnnouncementAiSearchDialog } from "@/components/AnnouncementAiSearchDialog";
 import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InternalAnnouncementPromptPanel } from "./InternalAnnouncementPromptPanel";
 
 const PAGE_SIZE = 20;
+const EXPORT_BATCH_SIZE = 100;
 
 const SOURCE_OPTIONS: { value: AnnouncementSource | "ALL"; label: string }[] = [
   { value: "ALL", label: "Wszystkie źródła" },
   { value: "BAZA_KONKURENCYJNOSCI", label: "Baza Konk." },
   { value: "E_ZAMOWIENIA", label: "e-Zamówienia" },
   { value: "PLATFORMA_ZAKUPOWA", label: "Platf. Zakup." },
+  { value: "INTERNAL", label: "Wewnętrzne" },
 ];
 
 const STATUS_OPTIONS: { value: AnnouncementStatus | "ALL"; label: string }[] = [
@@ -136,8 +140,7 @@ function ScraperPanel() {
 
   return (
     <Card>
-      <CardContent className="py-4 space-y-3">
-        {/* Queue status row */}
+      <CardContent className="space-y-3 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span
@@ -179,7 +182,6 @@ function ScraperPanel() {
 
         <Separator />
 
-        {/* Trigger buttons row */}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
@@ -241,6 +243,39 @@ export function AnnouncementsPage() {
   const [reportTarget, setReportTarget] = useState<Announcement | null>(null);
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
 
+  function escapeCsvCell(value: string) {
+    return `"${value.replaceAll('"', '""')}"`;
+  }
+
+  function buildAnnouncementsCsvRows(announcements: Announcement[]) {
+    const header = ["tytul", "link", "termin"];
+    const rows = announcements.map((announcement) => [
+      announcement.displayTitle ?? announcement.title,
+      announcement.url,
+      announcement.deadlineAt
+        ? format(new Date(announcement.deadlineAt), "yyyy-MM-dd")
+        : "",
+    ]);
+
+    return [header, ...rows]
+      .map((row) => row.map((cell) => escapeCsvCell(cell)).join(","))
+      .join("\n");
+  }
+
+  function downloadAnnouncementsCsv(content: string) {
+    const blob = new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const dateStamp = format(new Date(), "yyyy-MM-dd");
+
+    anchor.href = url;
+    anchor.download = `ogloszenia-${dateStamp}.csv`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const query = useQuery({
     queryKey: ["announcements", debouncedSearch, page, PAGE_SIZE, sourceFilter, statusFilter],
     queryFn: () =>
@@ -268,6 +303,45 @@ export function AnnouncementsPage() {
     [announcements, exactAnnouncement],
   );
   const meta = query.data?.meta;
+
+  const exportCsvMutation = useMutation({
+    mutationFn: async () => {
+      const totalItems = meta?.total ?? visibleAnnouncements.length;
+
+      if (totalItems === 0) {
+        return [] as Announcement[];
+      }
+
+      const totalPages = Math.ceil(totalItems / EXPORT_BATCH_SIZE);
+      const items: Announcement[] = [];
+
+      for (let exportPage = 1; exportPage <= totalPages; exportPage += 1) {
+        const response = await fetchAnnouncements({
+          search: debouncedSearch,
+          page: exportPage,
+          limit: EXPORT_BATCH_SIZE,
+          source: sourceFilter === "ALL" ? undefined : sourceFilter,
+          status: statusFilter === "ALL" ? undefined : statusFilter,
+        });
+
+        items.push(...response.data);
+      }
+
+      return items;
+    },
+    onSuccess: (items) => {
+      if (items.length === 0) {
+        toast.error("Brak ogłoszeń do eksportu");
+        return;
+      }
+
+      downloadAnnouncementsCsv(buildAnnouncementsCsvRows(items));
+      toast.success(`Wyeksportowano ${items.length} ogłoszeń do CSV`);
+    },
+    onError: () => {
+      toast.error("Nie udało się wyeksportować ogłoszeń");
+    },
+  });
 
   const columns = useMemo<ColumnDef<Announcement>[]>(
     () => [
@@ -398,83 +472,120 @@ export function AnnouncementsPage() {
 
   return (
     <div className="grid gap-6">
-      <ScraperPanel />
+      <Tabs defaultValue="list" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="list">Lista ogłoszeń</TabsTrigger>
+          <TabsTrigger value="create">Dodaj ogłoszenie</TabsTrigger>
+        </TabsList>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1.5">
-          {SOURCE_OPTIONS.map((opt) => (
-            <Button
-              key={opt.value}
-              variant={sourceFilter === opt.value ? "default" : "outline"}
-              size="xs"
-              onClick={() => {
-                setSourceFilter(opt.value);
-                setPage(1);
-              }}
-            >
-              {opt.label}
-            </Button>
-          ))}
-        </div>
-        <Separator orientation="vertical" className="hidden h-6 sm:block" />
-        <div className="flex flex-wrap gap-1.5">
-          {STATUS_OPTIONS.map((opt) => (
-            <Button
-              key={opt.value}
-              variant={statusFilter === opt.value ? "default" : "outline"}
-              size="xs"
-              onClick={() => {
-                setStatusFilter(opt.value);
-                setPage(1);
-              }}
-            >
-              {opt.label}
-            </Button>
-          ))}
-        </div>
-        <div className="ml-auto">
-          <Button variant="outline" size="sm" onClick={() => setAiDialogOpen(true)}>
-            AI Match Lab
-          </Button>
-        </div>
-      </div>
+        <TabsContent value="list" className="space-y-6">
+          <ScraperPanel />
 
-      {meta && (
-        <p className="text-sm text-muted-foreground">
-          Łącznie w bazie:{" "}
-          <span className="font-semibold text-foreground">
-            {meta.total.toLocaleString("pl-PL")}
-          </span>{" "}
-          ogłoszeń
-        </p>
-      )}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {SOURCE_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={sourceFilter === opt.value ? "default" : "outline"}
+                  size="xs"
+                  onClick={() => {
+                    setSourceFilter(opt.value);
+                    setPage(1);
+                  }}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+            <Separator orientation="vertical" className="hidden h-6 sm:block" />
+            <div className="flex flex-wrap gap-1.5">
+              {STATUS_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={statusFilter === opt.value ? "default" : "outline"}
+                  size="xs"
+                  onClick={() => {
+                    setStatusFilter(opt.value);
+                    setPage(1);
+                  }}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => exportCsvMutation.mutate()}
+                disabled={exportCsvMutation.isPending || (meta?.total ?? visibleAnnouncements.length) === 0}
+              >
+                {exportCsvMutation.isPending ? "Eksport CSV…" : "Eksport CSV"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setAiDialogOpen(true)}>
+                AI Match Lab
+              </Button>
+            </div>
+          </div>
 
-      <DataTable
-        data={visibleAnnouncements}
-        columns={columns}
-        rowActions={rowActions}
-        isLoading={query.isLoading}
-        loadingMessage="Ładowanie ogłoszeń..."
-        searchEnabled
-        searchValue={inputSearch}
-        searchPlaceholder="Szukaj po tytule ogłoszenia"
-        onSearchChange={(value) => {
-          setInputSearch(value);
-          setPage(1);
-        }}
-        pagination={{
-          enabled: true,
-          currentPage: meta?.page ?? page,
-          pageSize: meta?.limit ?? PAGE_SIZE,
-          totalItems: meta?.total ?? 0,
-          onPageChange: (nextPage) => setPage(nextPage),
-        }}
-        emptyState={{
-          title: "Brak ogłoszeń dla podanych kryteriów.",
-          description: "Spróbuj zmienić filtry lub uruchom scraper.",
-        }}
-      />
+          {meta && (
+            <p className="text-sm text-muted-foreground">
+              Łącznie w bazie:{" "}
+              <span className="font-semibold text-foreground">
+                {meta.total.toLocaleString("pl-PL")}
+              </span>{" "}
+              ogłoszeń
+            </p>
+          )}
+
+          <DataTable
+            data={visibleAnnouncements}
+            columns={columns}
+            rowActions={rowActions}
+            isLoading={query.isLoading}
+            loadingMessage="Ładowanie ogłoszeń..."
+            searchEnabled
+            searchValue={inputSearch}
+            searchPlaceholder="Szukaj po tytule ogłoszenia"
+            onSearchChange={(value) => {
+              setInputSearch(value);
+              setPage(1);
+            }}
+            pagination={{
+              enabled: true,
+              currentPage: meta?.page ?? page,
+              pageSize: meta?.limit ?? PAGE_SIZE,
+              totalItems: meta?.total ?? 0,
+              onPageChange: (nextPage) => setPage(nextPage),
+            }}
+            emptyState={{
+              title: "Brak ogłoszeń dla podanych kryteriów.",
+              description: "Spróbuj zmienić filtry lub uruchom scraper.",
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="create" className="space-y-4">
+          <Card>
+            <CardContent className="space-y-3 py-5">
+              <div>
+                <p className="text-sm font-medium">Dodaj ogłoszenie wewnętrzne</p>
+                <p className="text-sm text-muted-foreground">
+                  Opisz potrzebę zakupową własnymi słowami. Asystent dopyta o braki i zapisze wynik do tej samej tabeli ogłoszeń, więc embedding i matching ruszą automatycznie.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <InternalAnnouncementPromptPanel
+            onCreated={(announcement) => {
+              setSourceFilter("INTERNAL");
+              setPage(1);
+              setReportTarget(announcement);
+            }}
+          />
+        </TabsContent>
+      </Tabs>
 
       <RawDataDialog
         announcement={selected}

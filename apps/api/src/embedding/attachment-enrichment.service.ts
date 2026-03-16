@@ -24,13 +24,13 @@ const MAX_ATTACHMENTS = 3;
 /** Maksymalna liczba znaków tekstu wyciągniętego z jednego pliku */
 const MAX_CHARS_PER_FILE = 4_000;
 
-/** Maksymalna liczba znaków ze wszystkich załączników per item */
+/** Maksymalna liczba znaków ze wszystkich załączników per announcement */
 const MAX_TOTAL_ATTACHMENT_CHARS = 12_000;
 
 /** Maksymalna liczba tokenów w odpowiedzi GPT */
 const MAX_SUMMARY_TOKENS = 500;
 
-/** Znacznik w searchContext — obecność oznacza, że item już był wzbogacony */
+/** Znacznik w searchContext — obecność oznacza, że announcement już był wzbogacony */
 const ENRICHMENT_MARKER = "| ZAŁĄCZNIKI:";
 
 const SUMMARY_SYSTEM_PROMPT = `Jesteś asystentem analizującym dokumenty polskich przetargów i zapytań ofertowych.
@@ -59,32 +59,28 @@ export class AttachmentEnrichmentService {
    * Pipeline wzbogacania kontekstu o treść najistotniejszych załączników tekstowych.
    *
    * Kroki:
-   *  1. Pobierz AnnouncementItem + Announcement.rawData
+  *  1. Pobierz Announcement.rawData
    *  2. Wybierz najistotniejsze załączniki tekstowe (PDF/DOCX/TXT/HTML/...)
    *  3. Pobierz każdy plik, wyciągnij tekst, skróć do budżetu znaków
    *  4. Przekaż zebrany tekst do GPT-5 mini → krótkie podsumowanie
    *  5. Dopisz "| ZAŁĄCZNIKI: {summary}" do searchContext
-   *  6. Wrzuć item ponownie do kolejki EMBED_ITEM (re-embedding z nowym kontekstem)
+   *  6. Wrzuć announcement ponownie do kolejki EMBED_ANNOUNCEMENT
    */
   async enrichItem(itemId: string): Promise<void> {
-    // ── 1. Pobierz item ──────────────────────────────────────────────────────
-    const item = await this.prisma.announcementItem.findUnique({
+    // ── 1. Pobierz announcement ──────────────────────────────────────────────
+    const item = await this.prisma.announcement.findUnique({
       where: { id: itemId },
       select: {
         id: true,
         searchContext: true,
-        announcementId: true,
-        announcement: {
-          select: {
-            rawData: true,
-            sourceSystem: true,
-          },
-        },
+        rawData: true,
+        sourceSystem: true,
+        embeddingStatus: true,
       },
     });
 
     if (!item) {
-      throw new NotFoundException(`AnnouncementItem not found: ${itemId}`);
+      throw new NotFoundException(`Announcement not found: ${itemId}`);
     }
 
     // Idempotentność — skip jeśli już wzbogacony
@@ -94,7 +90,7 @@ export class AttachmentEnrichmentService {
     }
 
     // ── 2. Wyciągnij załączniki ──────────────────────────────────────────────
-    const rawData = item.announcement.rawData as Record<string, unknown>;
+    const rawData = item.rawData as Record<string, unknown>;
     const allAttachments: RawAttachmentLike[] = Array.isArray(
       rawData.attachments,
     )
@@ -105,7 +101,7 @@ export class AttachmentEnrichmentService {
     const cache = this.createAttachmentCacheAdapter();
     const rankedAttachments = normalizeAndRankAttachments(allAttachments, {
       bkApiBaseUrl: bkApiBase,
-      sourceSystem: item.announcement.sourceSystem,
+      sourceSystem: item.sourceSystem,
       maxAttachments: MAX_ATTACHMENTS,
     });
 
@@ -159,11 +155,11 @@ export class AttachmentEnrichmentService {
     // ── 5. Zaktualizuj searchContext ─────────────────────────────────────────
     const enrichedContext = `${item.searchContext} ${ENRICHMENT_MARKER} ${summary}`;
 
-    await this.prisma.announcementItem.update({
+    await this.prisma.announcement.update({
       where: { id: itemId },
       data: {
         searchContext: enrichedContext,
-        status: "PENDING", // Reset do PENDING — EMBED_ITEM ponownie wygeneruje wektor
+        embeddingStatus: "PENDING",
       },
     });
 
@@ -171,10 +167,10 @@ export class AttachmentEnrichmentService {
       `Item ${itemId} — searchContext enriched (+${summary.length} chars), re-queuing embed`,
     );
 
-    // ── 6. Re-queue EMBED_ITEM ───────────────────────────────────────────────
+    // ── 6. Re-queue EMBED_ANNOUNCEMENT ───────────────────────────────────────
     await this.embeddingQueue.add(
-      EmbeddingJob.EMBED_ITEM,
-      { itemId },
+      EmbeddingJob.EMBED_ANNOUNCEMENT,
+      { announcementId: itemId },
       {
         attempts: 3,
         backoff: { type: "exponential", delay: 5_000 },

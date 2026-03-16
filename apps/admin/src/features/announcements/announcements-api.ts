@@ -2,6 +2,7 @@ import {
   announcementsListResponseSchema,
   announcementResponseSchema,
   announcementReportResponseSchema,
+  internalAnnouncementPromptResponseSchema,
   searchResponseSchema,
   type AnnouncementSource,
   type AnnouncementStatus,
@@ -39,6 +40,14 @@ export async function fetchAnnouncements({
 export async function fetchAnnouncement(id: string) {
   const response = await api.get(`/announcements/${id}`);
   return announcementResponseSchema.parse(response.data);
+}
+
+export async function sendInternalAnnouncementPromptMessage(
+  sessionId: string | undefined,
+  message: string,
+) {
+  const response = await api.post("/announcements/internal/prompt", { sessionId, message });
+  return internalAnnouncementPromptResponseSchema.parse(response.data);
 }
 
 export async function triggerScraper() {

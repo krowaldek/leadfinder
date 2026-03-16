@@ -17,7 +17,7 @@ export function AppShell() {
       await logout();
     } finally {
       clearSession();
-      void navigate({ to: "/login" });
+      void navigate({ to: "/login", search: { redirect: undefined } });
     }
   };
 

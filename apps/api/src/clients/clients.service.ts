@@ -242,7 +242,6 @@ export class ClientsService {
       status: match.status,
       createdAt: match.createdAt.toISOString(),
       updatedAt: match.updatedAt.toISOString(),
-      debug: match.debug ?? null,
       announcement: {
         id: match.announcement.id,
         title: match.announcement.title,

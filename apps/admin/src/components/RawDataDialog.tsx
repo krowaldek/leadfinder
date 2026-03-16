@@ -45,6 +45,7 @@ export const SOURCE_LABELS: Record<AnnouncementSource, string> = {
   BAZA_KONKURENCYJNOSCI: "Baza Konkurencyjności",
   E_ZAMOWIENIA: "e-Zamówienia",
   PLATFORMA_ZAKUPOWA: "Platforma Zakupowa",
+  INTERNAL: "Wewnętrzne",
 };
 
 export const STATUS_LABELS: Record<AnnouncementStatus, string> = {
@@ -170,12 +171,14 @@ export function RawDataDialog({ announcement, open, onClose }: RawDataDialogProp
                     <div className="mt-4">
                       <a
                         href={full!.url}
-                        target="_blank"
-                        rel="noreferrer"
+                        target={full!.sourceSystem === "INTERNAL" ? undefined : "_blank"}
+                        rel={full!.sourceSystem === "INTERNAL" ? undefined : "noreferrer"}
                         className="inline-flex items-center gap-2 text-sm underline-offset-4 hover:underline text-primary"
                       >
                         <ExternalLink className="size-4" />
-                        Otwórz ogłoszenie w serwisie źródłowym
+                        {full!.sourceSystem === "INTERNAL"
+                          ? "Otwórz ogłoszenie w panelu"
+                          : "Otwórz ogłoszenie w serwisie źródłowym"}
                       </a>
                     </div>
                   </section>
