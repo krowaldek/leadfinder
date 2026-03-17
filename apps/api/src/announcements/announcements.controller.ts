@@ -1,8 +1,13 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, UseGuards } from "@nestjs/common";
 import {
   AnnouncementsListQuery,
+  InternalAnnouncementChatCommentRequest,
+  InternalAnnouncementChatListQuery,
   announcementsListQuerySchema,
+  internalAnnouncementChatCommentRequestSchema,
+  internalAnnouncementChatListQuerySchema,
   internalAnnouncementPromptRequestSchema,
+  type AuthUser,
   type InternalAnnouncementPromptRequest,
 } from "@leadfinder/contracts";
 import { AnnouncementsService } from "./announcements.service.js";
@@ -12,6 +17,7 @@ import { JwtAuthGuard } from "../common/jwt-auth.guard.js";
 import { RolesGuard } from "../common/roles.guard.js";
 import { Roles } from "../common/roles.decorator.js";
 import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
+import { CurrentUser } from "../common/current-user.decorator.js";
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles("SUPER_ADMIN", "ADMIN")
@@ -33,6 +39,34 @@ export class AnnouncementsController {
     body: InternalAnnouncementPromptRequest,
   ) {
     return this.internalPromptService.processMessage(body.sessionId, body.message);
+  }
+
+  @Get("internal/chats")
+  async findInternalChats(
+    @Query(new ZodValidationPipe(internalAnnouncementChatListQuerySchema))
+    query: InternalAnnouncementChatListQuery,
+  ) {
+    return this.announcementsService.findInternalPromptChats(query);
+  }
+
+  @Get("internal/chats/:id")
+  async findInternalChat(@Param("id") id: string) {
+    return {
+      data: await this.announcementsService.findInternalPromptChat(id),
+    };
+  }
+
+  @Post("internal/chats/:id/comments")
+  @HttpCode(200)
+  async addInternalChatComment(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(internalAnnouncementChatCommentRequestSchema))
+    body: InternalAnnouncementChatCommentRequest,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return {
+      data: await this.announcementsService.addInternalPromptChatComment(id, body.content, user),
+    };
   }
 
   @Get()

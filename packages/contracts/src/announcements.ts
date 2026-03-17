@@ -17,6 +17,18 @@ export type InternalAnnouncementPromptRequest = z.infer<
   typeof internalAnnouncementPromptRequestSchema
 >;
 
+export const internalAnnouncementChatListQuerySchema = listQuerySchema;
+export type InternalAnnouncementChatListQuery = z.infer<
+  typeof internalAnnouncementChatListQuerySchema
+>;
+
+export const internalAnnouncementChatCommentRequestSchema = z.object({
+  content: z.string().trim().min(1).max(3000),
+});
+export type InternalAnnouncementChatCommentRequest = z.infer<
+  typeof internalAnnouncementChatCommentRequestSchema
+>;
+
 export const announcementStatusSchema = z.enum([
   "OPEN",
   "CLOSED",
@@ -75,17 +87,80 @@ export const internalAnnouncementPromptQuestionResponseSchema = z.object({
   collectedData: z.record(z.string(), z.unknown()),
 });
 
+export const internalAnnouncementPromptReviewResponseSchema = z.object({
+  status: z.literal("review"),
+  sessionId: z.string(),
+  summary: z.string(),
+  collectedData: z.record(z.string(), z.unknown()),
+});
+
 export const internalAnnouncementPromptCreatedResponseSchema = z.object({
   status: z.literal("created"),
   announcement: z.lazy(() => announcementSchema),
 });
 
+export const internalAnnouncementChatMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+});
+export type InternalAnnouncementChatMessage = z.infer<typeof internalAnnouncementChatMessageSchema>;
+
+export const internalAnnouncementChatCommentSchema = z.object({
+  id: z.string(),
+  content: z.string(),
+  createdAt: z.string().datetime(),
+  authorName: z.string().nullable().optional(),
+  authorEmail: z.string().nullable().optional(),
+});
+export type InternalAnnouncementChatComment = z.infer<typeof internalAnnouncementChatCommentSchema>;
+
+export const internalAnnouncementChatListItemSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  description: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  messageCount: z.number().int().nonnegative(),
+  commentCount: z.number().int().nonnegative(),
+  lastMessagePreview: z.string().nullable(),
+});
+export type InternalAnnouncementChatListItem = z.infer<typeof internalAnnouncementChatListItemSchema>;
+
+export const internalAnnouncementChatDetailSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  description: z.string().nullable(),
+  detailedReport: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  collectedData: z.record(z.string(), z.unknown()),
+  conversation: z.array(internalAnnouncementChatMessageSchema),
+  feedbackComments: z.array(internalAnnouncementChatCommentSchema),
+});
+export type InternalAnnouncementChatDetail = z.infer<typeof internalAnnouncementChatDetailSchema>;
+
 export const internalAnnouncementPromptResponseSchema = z.discriminatedUnion("status", [
   internalAnnouncementPromptQuestionResponseSchema,
+  internalAnnouncementPromptReviewResponseSchema,
   internalAnnouncementPromptCreatedResponseSchema,
 ]);
 export type InternalAnnouncementPromptResponse = z.infer<
   typeof internalAnnouncementPromptResponseSchema
+>;
+
+export const internalAnnouncementChatListResponseSchema = z.object({
+  data: z.array(internalAnnouncementChatListItemSchema),
+  meta: paginatedMetaSchema,
+});
+export type InternalAnnouncementChatListResponse = z.infer<
+  typeof internalAnnouncementChatListResponseSchema
+>;
+
+export const internalAnnouncementChatDetailResponseSchema = z.object({
+  data: internalAnnouncementChatDetailSchema,
+});
+export type InternalAnnouncementChatDetailResponse = z.infer<
+  typeof internalAnnouncementChatDetailResponseSchema
 >;
 
 export const announcementsListQuerySchema = listQuerySchema.extend({

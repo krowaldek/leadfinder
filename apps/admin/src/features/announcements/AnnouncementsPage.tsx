@@ -28,6 +28,7 @@ import {
 import { AnnouncementAiSearchDialog } from "@/components/AnnouncementAiSearchDialog";
 import { AnnouncementReportDialog } from "@/components/AnnouncementReportDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InternalAnnouncementHistoryTab } from "./InternalAnnouncementHistoryTab";
 import { InternalAnnouncementPromptPanel } from "./InternalAnnouncementPromptPanel";
 
 const PAGE_SIZE = 20;
@@ -476,6 +477,7 @@ export function AnnouncementsPage() {
         <TabsList>
           <TabsTrigger value="list">Lista ogłoszeń</TabsTrigger>
           <TabsTrigger value="create">Dodaj ogłoszenie</TabsTrigger>
+          <TabsTrigger value="history">Historia czatów</TabsTrigger>
         </TabsList>
 
         <TabsContent value="list" className="space-y-6">
@@ -584,6 +586,21 @@ export function AnnouncementsPage() {
               setReportTarget(announcement);
             }}
           />
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardContent className="space-y-3 py-5">
+              <div>
+                <p className="text-sm font-medium">Archiwum czatów tworzenia ogłoszeń</p>
+                <p className="text-sm text-muted-foreground">
+                  Podejrzyj zakończone rozmowy z asystentem i dodawaj komentarze, które pomogą poprawiać ten flow w kolejnych iteracjach.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <InternalAnnouncementHistoryTab />
         </TabsContent>
       </Tabs>
 

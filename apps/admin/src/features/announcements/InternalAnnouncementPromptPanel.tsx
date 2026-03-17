@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import type { Announcement } from "@leadfinder/contracts";
 import { sendInternalAnnouncementPromptMessage } from "./announcements-api";
 
+const CONFIRM_CREATE_MESSAGE = "__CONFIRM_INTERNAL_ANNOUNCEMENT__";
+
 interface Message {
   role: "user" | "assistant";
   text: string;
@@ -15,7 +17,7 @@ interface Message {
 
 const INITIAL_MESSAGE: Message = {
   role: "assistant",
-  text: "Cześć! Opisz, jakiego ogłoszenia wewnętrznego potrzebujesz, a dopytam o brakujące szczegóły tak, żeby wykonawca mógł przygotować sensowną wycenę.",
+  text: "Cześć! Opisz, jakiego ogłoszenia wewnętrznego potrzebujesz, a ja dopytam o brakujące szczegóły tak, żeby wykonawca mógł to sensownie wycenić. Jeśli temat dotyczy montażu albo prac na miejscu, mogę też podpowiedzieć, że przydadzą się zdjęcia, szkic albo inspiracje.",
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -56,6 +58,7 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [collectedData, setCollectedData] = useState<Record<string, unknown>>({});
   const [createdAnnouncement, setCreatedAnnouncement] = useState<Announcement | null>(null);
+  const [reviewPending, setReviewPending] = useState(false);
 
   const sendMutation = useMutation({
     mutationFn: (message: string) => sendInternalAnnouncementPromptMessage(sessionId, message),
@@ -67,9 +70,16 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
       if (result.status === "question") {
         setSessionId(result.sessionId);
         setCollectedData(result.collectedData as Record<string, unknown>);
+        setReviewPending(false);
         setMessages((previous) => [...previous, { role: "assistant", text: result.question }]);
+      } else if (result.status === "review") {
+        setSessionId(result.sessionId);
+        setCollectedData(result.collectedData as Record<string, unknown>);
+        setReviewPending(true);
+        setMessages((previous) => [...previous, { role: "assistant", text: result.summary }]);
       } else {
         setCreatedAnnouncement(result.announcement);
+        setReviewPending(false);
         setMessages((previous) => [
           ...previous,
           {
@@ -78,6 +88,7 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
           },
         ]);
         void queryClient.invalidateQueries({ queryKey: ["announcements"] });
+        void queryClient.invalidateQueries({ queryKey: ["internal-announcement-chats"] });
         toast.success("Ogłoszenie wewnętrzne zostało utworzone");
         onCreated?.(result.announcement);
       }
@@ -99,6 +110,7 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
     setSessionId(undefined);
     setCollectedData({});
     setCreatedAnnouncement(null);
+    setReviewPending(false);
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -106,6 +118,11 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
     const message = input.trim();
     if (!message || sendMutation.isPending) return;
     sendMutation.mutate(message);
+  }
+
+  function handleConfirmCreate() {
+    if (!sessionId || sendMutation.isPending) return;
+    sendMutation.mutate(CONFIRM_CREATE_MESSAGE);
   }
 
   return (
@@ -171,10 +188,19 @@ export function InternalAnnouncementPromptPanel({ onCreated }: InternalAnnouncem
             <Input
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Np. szukamy wykonawcy wdrożenia CRM dla 40 handlowców…"
+              placeholder={reviewPending
+                ? "Np. zmień termin na koniec maja albo dopisz warunek SLA…"
+                : "Np. szukamy wykonawcy wdrożenia CRM dla 40 handlowców…"}
               disabled={sendMutation.isPending}
             />
-            <Button type="submit" disabled={!input.trim() || sendMutation.isPending}>Wyślij</Button>
+            <Button type="submit" disabled={!input.trim() || sendMutation.isPending}>
+              {reviewPending ? "Popraw" : "Wyślij"}
+            </Button>
+            {reviewPending && (
+              <Button type="button" onClick={handleConfirmCreate} disabled={sendMutation.isPending}>
+                Utwórz ogłoszenie
+              </Button>
+            )}
           </div>
         </form>
       )}

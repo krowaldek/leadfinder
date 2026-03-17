@@ -51,6 +51,8 @@ interface SessionHistory {
 interface SessionData {
   collected: CollectedFields;
   history: SessionHistory[];
+  pendingFinalAnnouncement?: z.infer<typeof finalAnnouncementSchema> | null;
+  pendingSummary?: string | null;
 }
 
 const REQUIRED_FIELDS: (keyof CollectedFields)[] = [
@@ -90,6 +92,27 @@ const aiExtractionSchema = z.object({
 });
 
 type AIExtraction = z.infer<typeof aiExtractionSchema>;
+
+const CONFIRM_CREATE_MESSAGE = "__CONFIRM_INTERNAL_ANNOUNCEMENT__";
+const CONFIRM_MESSAGES = new Set([
+  "ok",
+  "okej",
+  "okejka",
+  "tak",
+  "yes",
+  "potwierdzam",
+  "zgadza się",
+  "zgadza sie",
+  "utwórz",
+  "utworz",
+  "twórz",
+  "tworz",
+  "stwórz",
+  "stworz",
+  "zapisz",
+  "może być",
+  "moze byc",
+]);
 
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim();
@@ -146,6 +169,29 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
     const sid = sessionId ?? crypto.randomUUID();
     const session = await this.loadSession(sid);
 
+    if (session.pendingFinalAnnouncement && this.isConfirmationMessage(userMessage)) {
+      session.history.push({ role: "user", content: userMessage });
+      session.history.push({ role: "assistant", content: "Jasne — zapisuję ogłoszenie." });
+
+      const announcement = await this.createInternalAnnouncement(
+        sid,
+        session.collected,
+        session.history,
+        session.pendingFinalAnnouncement,
+      );
+      await this.redis.del(`${SESSION_PREFIX}${sid}`);
+
+      return {
+        status: "created" as const,
+        announcement,
+      };
+    }
+
+    if (session.pendingFinalAnnouncement) {
+      session.pendingFinalAnnouncement = null;
+      session.pendingSummary = null;
+    }
+
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -190,6 +236,8 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
     await this.saveSession(sid, {
       collected: updated,
       history: session.history,
+      pendingFinalAnnouncement: null,
+      pendingSummary: null,
     });
 
     const stillMissing = this.getMissingFields(updated);
@@ -197,12 +245,21 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
 
     if (isActuallyComplete) {
       const finalPayload = extraction.finalAnnouncement ?? this.buildFallbackAnnouncement(updated);
-      const announcement = await this.createInternalAnnouncement(sid, updated, session.history, finalPayload);
-      await this.redis.del(`${SESSION_PREFIX}${sid}`);
+      const summary = this.buildReviewSummary(updated, finalPayload);
+
+      session.history.push({ role: "assistant", content: summary });
+      await this.saveSession(sid, {
+        collected: updated,
+        history: session.history,
+        pendingFinalAnnouncement: finalPayload,
+        pendingSummary: summary,
+      });
 
       return {
-        status: "created" as const,
-        announcement,
+        status: "review" as const,
+        sessionId: sid,
+        summary,
+        collectedData: updated,
       };
     }
 
@@ -253,6 +310,16 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
     return `Jesteś asystentem Leadfinder pomagającym stworzyć WEWNĘTRZNE ogłoszenie zakupowe w języku polskim.
 Twoim celem jest zebrać tyle informacji, aby wykonawca mógł przygotować sensowną wycenę i odpowiedź.
 
+  Styl rozmowy:
+  - Pisz po polsku, naturalnie, przyjaźnie i luźno.
+  - Nie brzmisz urzędowo ani formalistycznie.
+  - Nie używaj sztywnych sformułowań typu "proszę wskazać" albo "uprzejmie proszę o doprecyzowanie".
+  - Możesz używać lekkiego humoru i krótkich, naturalnych wstawek, ale bez przesady i bez robienia z rozmowy stand-upu.
+  - Przed pytaniem możesz bardzo krótko nawiązać do poprzedniej odpowiedzi, np. "Super", "Świetnie", "No i pięknie", "WOW", "Zazdro" — o ile pasuje do kontekstu.
+  - Jeśli czegoś nie wiesz, po prostu dopytaj prostym pytaniem.
+  - Nie wymyślaj żadnych faktów. Używaj wyłącznie informacji od użytkownika albo takich, które jednoznacznie wynikają z rozmowy.
+  - Jeśli coś szacujesz albo dopowiadasz roboczo, wyraźnie zaznacz, że to szacunek i poproś o potwierdzenie.
+
 Aktualnie zebrane dane:
 ${collectedSummary}
 
@@ -263,7 +330,7 @@ Zasady rozmowy:
 1. Analizuj całą historię rozmowy i wyciągaj dane również z wcześniejszych wiadomości.
 2. Zadawaj TYLKO jedno krótkie pytanie na raz o największą lukę informacyjną.
 3. Jeśli użytkownik nie zna budżetu, dopuść odpowiedź typu "do oszacowania przez wykonawcę".
-4. Gdy informacji jest już dość, ustaw isComplete=true i przygotuj finalAnnouncement.
+4. Gdy informacji jest już dość, ustaw isComplete=true i przygotuj finalAnnouncement, ale bez dopowiadania brakujących faktów od siebie.
 5. finalAnnouncement ma być gotowy do zapisania w systemie i zawierać:
    - title: finalny tytuł ogłoszenia
    - description: zwięzły opis do listy
@@ -278,6 +345,9 @@ Zasady rozmowy:
      ## Dodatkowe uwagi dla wykonawcy
    - location, contractingAuthority, kind, deadlineAt (opcjonalnie jeśli da się wywnioskować)
 6. Jeśli danych jeszcze brakuje, finalAnnouncement ustaw na null.
+7. Jeżeli jakaś informacja jest tylko przypuszczeniem lub szerokim szacunkiem, wpisz ją ostrożnie i dopilnuj, aby response prosiło użytkownika o potwierdzenie.
+8. finalAnnouncement nie może zawierać niczego, czego użytkownik nie podał albo co nie wynika wprost z kontekstu rozmowy.
+9. Jeśli użytkownik opisuje coś, co będzie montowane, wykonywane na miejscu, wdrażane fizycznie albo zależy od warunków lokalnych, możesz zapytać o zdjęcie miejsca, szkic, koncepcję albo inspiracje — ale tylko wtedy, gdy realnie pomoże to w doprecyzowaniu zakresu.
 
 Odpowiedz WYŁĄCZNIE poprawnym JSON-em:
 {
@@ -303,6 +373,32 @@ Odpowiedz WYŁĄCZNIE poprawnym JSON-em:
     "deadlineAt": ISO datetime lub null
   }
 }`;
+  }
+
+  private buildReviewSummary(
+    collected: CollectedFields,
+    finalAnnouncement: z.infer<typeof finalAnnouncementSchema>,
+  ) {
+    const lines = [
+      "Mam robocze podsumowanie. Sprawdź proszę, czy wszystko się zgadza:",
+      `- Tytuł: ${normalizeOptionalText(finalAnnouncement.title) ?? normalizeOptionalText(collected.title) ?? "brak"}`,
+      `- Zamawiający: ${normalizeOptionalText(finalAnnouncement.contractingAuthority) ?? normalizeOptionalText(collected.contractingAuthority) ?? "brak"}`,
+      `- Lokalizacja: ${normalizeOptionalText(finalAnnouncement.location) ?? normalizeOptionalText(collected.location) ?? "brak"}`,
+      `- Zakres: ${normalizeOptionalText(collected.scope) ?? "brak"}`,
+      `- Wymagania: ${normalizeOptionalText(collected.requirements) ?? "brak"}`,
+      `- Terminy: ${normalizeOptionalText(collected.timeline) ?? "brak"}`,
+      `- Budżet: ${normalizeOptionalText(collected.budget) ?? "brak"}`,
+      "",
+      "Jeśli jest ok, kliknij utworzenie albo napisz po prostu \"utwórz\". Jeśli coś poprawić, napisz co zmienić.",
+    ];
+
+    return lines.join("\n");
+  }
+
+  private isConfirmationMessage(message: string) {
+    const normalized = normalizeOptionalText(message)?.toLocaleLowerCase("pl-PL");
+    if (!normalized) return false;
+    return normalized === CONFIRM_CREATE_MESSAGE.toLocaleLowerCase("pl-PL") || CONFIRM_MESSAGES.has(normalized);
   }
 
   private buildFallbackAnnouncement(collected: CollectedFields) {
@@ -414,13 +510,19 @@ Odpowiedz WYŁĄCZNIE poprawnym JSON-em:
     const key = `${SESSION_PREFIX}${sessionId}`;
     const raw = await this.redis.get(key);
     if (!raw) {
-      return { collected: {}, history: [] };
+      return { collected: {}, history: [], pendingFinalAnnouncement: null, pendingSummary: null };
     }
 
     try {
-      return JSON.parse(raw) as SessionData;
+      const parsed = JSON.parse(raw) as SessionData;
+      return {
+        collected: parsed.collected ?? {},
+        history: parsed.history ?? [],
+        pendingFinalAnnouncement: parsed.pendingFinalAnnouncement ?? null,
+        pendingSummary: parsed.pendingSummary ?? null,
+      };
     } catch {
-      return { collected: {}, history: [] };
+      return { collected: {}, history: [], pendingFinalAnnouncement: null, pendingSummary: null };
     }
   }
 

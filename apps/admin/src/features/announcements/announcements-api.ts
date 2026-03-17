@@ -2,10 +2,13 @@ import {
   announcementsListResponseSchema,
   announcementResponseSchema,
   announcementReportResponseSchema,
+  internalAnnouncementChatDetailResponseSchema,
+  internalAnnouncementChatListResponseSchema,
   internalAnnouncementPromptResponseSchema,
   searchResponseSchema,
   type AnnouncementSource,
   type AnnouncementStatus,
+  type InternalAnnouncementChatListQuery,
   type SearchMode,
 } from "@leadfinder/contracts";
 import { api } from "@/lib/api";
@@ -48,6 +51,27 @@ export async function sendInternalAnnouncementPromptMessage(
 ) {
   const response = await api.post("/announcements/internal/prompt", { sessionId, message });
   return internalAnnouncementPromptResponseSchema.parse(response.data);
+}
+
+export async function fetchInternalAnnouncementChats({
+  search,
+  page,
+  limit,
+}: InternalAnnouncementChatListQuery) {
+  const response = await api.get("/announcements/internal/chats", {
+    params: { search, page, limit },
+  });
+  return internalAnnouncementChatListResponseSchema.parse(response.data);
+}
+
+export async function fetchInternalAnnouncementChat(id: string) {
+  const response = await api.get(`/announcements/internal/chats/${id}`);
+  return internalAnnouncementChatDetailResponseSchema.parse(response.data);
+}
+
+export async function addInternalAnnouncementChatComment(id: string, content: string) {
+  const response = await api.post(`/announcements/internal/chats/${id}/comments`, { content });
+  return internalAnnouncementChatDetailResponseSchema.parse(response.data);
 }
 
 export async function triggerScraper() {
