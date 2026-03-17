@@ -314,6 +314,12 @@ export class ClientsService {
         keptAfterRerank: candidate.keptAfterRerank,
         negativePenaltyApplied: candidate.negativePenaltyApplied,
         rejectionReasons: candidate.rejectionReasons,
+        rerankReason: candidate.rerankReason ?? null,
+        mustHaveSatisfied: candidate.mustHaveSatisfied ?? null,
+        excludeTriggered: candidate.excludeTriggered ?? null,
+        kindFit: candidate.kindFit ?? null,
+        topicCentrality: candidate.topicCentrality ?? null,
+        scopeType: candidate.scopeType ?? null,
         announcementVectorText:
           announcementText?.detailedReport
           ?? announcementText?.searchContext

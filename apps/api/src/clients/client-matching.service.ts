@@ -75,6 +75,12 @@ interface TopicMatchingDebugCandidate {
   keptAfterRerank: boolean;
   negativePenaltyApplied: boolean;
   rejectionReasons: string[];
+  rerankReason?: string | null;
+  mustHaveSatisfied?: boolean | null;
+  excludeTriggered?: boolean | null;
+  kindFit?: boolean | null;
+  topicCentrality?: "PRIMARY" | "SIGNIFICANT" | "SECONDARY" | "INCIDENTAL" | null;
+  scopeType?: "FOCUSED" | "MIXED" | "BUNDLED" | null;
 }
 
 interface TopicMatchingDebugReport {
@@ -115,7 +121,7 @@ const MATCH_THRESHOLD = 0.35;
 const ANNOUNCEMENT_MATCH_THRESHOLD = 0.4;
 
 /** How many vector candidates to retrieve from pgvector per topic. */
-const VECTOR_CANDIDATE_LIMIT = 200;
+const VECTOR_CANDIDATE_LIMIT = 50;
 
 /** How many keyword-search candidates to retrieve per topic. */
 const KEYWORD_MATCH_LIMIT = 100;
@@ -124,7 +130,7 @@ const KEYWORD_MATCH_LIMIT = 100;
 const FINAL_MATCH_LIMIT = 100;
 
 /** How many top candidates to send to the LLM re-ranker. */
-const RERANK_WINDOW = 25;
+const RERANK_WINDOW = 50;
 
 /** Used in the reverse direction (announcement → topics). */
 const MATCH_LIMIT_TOPICS = 100;
@@ -139,17 +145,11 @@ const SEMANTIC_WEIGHT = 0.5;
 const KEYWORD_WEIGHT = 0.2;
 
 /** Blend weights when LLM re-rank score is available. */
-const RERANK_HYBRID_WEIGHT = 0.40;
-const RERANK_LLM_WEIGHT = 0.60;
+const RERANK_HYBRID_WEIGHT = 0.00;
+const RERANK_LLM_WEIGHT = 1.00;
 
-/** Weight of domain-specific lexical overlap in the hybrid score. */
-const DOMAIN_WEIGHT = 0.3;
-
-/** Minimum domain evidence required unless semantic or keyword signal is very strong. */
-const MIN_DOMAIN_SCORE = 0.18;
-
-/** Lower domain floor used for strong semantic/keyword matches. */
-const SOFT_DOMAIN_SCORE = 0.1;
+/** Domain scoring is disabled from match calculation and filtering. */
+const DOMAIN_WEIGHT = 0;
 
 /** Minimum hybrid score required to store a match. */
 const MIN_FINAL_SCORE = 0.33;
@@ -586,7 +586,17 @@ export class ClientMatchingService {
         const keptAfterFilters = keptAfterFiltersIds.has(candidate.announcement_id);
         const sentToRerank = rerankWindowIds.has(candidate.announcement_id);
         const keptAfterRerank = keptAfterRerankIds.has(candidate.announcement_id);
-        const effective = rerankedCandidate ?? { ...candidate, final: candidate.hybrid, rerank: null };
+        const effective = rerankedCandidate ?? {
+          ...candidate,
+          final: candidate.hybrid,
+          rerank: null,
+          rerankReason: null,
+          mustHaveSatisfied: null,
+          excludeTriggered: null,
+          kindFit: null,
+          topicCentrality: null,
+          scopeType: null,
+        };
         const rejectionReasons = this.getCandidateRejectionReasons(candidate, {
           keptAfterFilters,
           sentToRerank,
@@ -607,6 +617,12 @@ export class ClientMatchingService {
           keptAfterRerank,
           negativePenaltyApplied: candidate.negativePenaltyApplied,
           rejectionReasons,
+          rerankReason: effective.rerankReason ?? null,
+          mustHaveSatisfied: effective.mustHaveSatisfied ?? null,
+          excludeTriggered: effective.excludeTriggered ?? null,
+          kindFit: effective.kindFit ?? null,
+          topicCentrality: effective.topicCentrality ?? null,
+          scopeType: effective.scopeType ?? null,
         };
       })
       .sort((a, b) => b.final - a.final);
@@ -697,12 +713,12 @@ export class ClientMatchingService {
       );
       const negativeKeywords = (topicRow.negative_keywords ?? []) as string[];
       const isPenalized = applyNegativePenalty(announcementHaystack, negativeKeywords);
-      const combined = clamp(Number(topicRow.similarity) * 0.7 + domainScore * 0.3);
+      const combined = clamp(Number(topicRow.similarity));
       const finalSimilarity = isPenalized
         ? combined * NEGATIVE_KEYWORD_PENALTY
         : combined;
 
-      if (!this.shouldKeepFastMatch(profile, Number(topicRow.similarity), domainScore, finalSimilarity)) {
+      if (!this.shouldKeepFastMatch(profile, Number(topicRow.similarity), finalSimilarity)) {
         continue;
       }
 
@@ -900,9 +916,7 @@ export class ClientMatchingService {
       map.set(id, {
         ...c,
         domain,
-        hybrid: clamp(
-          c.semantic * SEMANTIC_WEIGHT + c.keyword * KEYWORD_WEIGHT + domain * DOMAIN_WEIGHT,
-        ),
+        hybrid: clamp(c.semantic),
       });
     }
 
@@ -917,7 +931,7 @@ export class ClientMatchingService {
   ): Promise<ScoredCandidate[]> {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey || candidates.length === 0) {
-      return candidates.map((c) => ({ ...c, final: c.hybrid }));
+      return candidates.map((c) => ({ ...c, final: c.semantic }));
     }
 
     const window = candidates.slice(0, RERANK_WINDOW);
@@ -934,7 +948,7 @@ export class ClientMatchingService {
       const compact = window.map((c) => ({
         id: c.announcement_id,
         title: c.title,
-        context: (c.search_context || c.description || "").slice(0, 250),
+        context: (c.search_context || c.description || "").slice(0, 1200),
         domain: c.domain,
         hybrid: c.hybrid,
       }));
@@ -942,33 +956,132 @@ export class ClientMatchingService {
       const result = await llm.invoke([
         [
           "system",
-          `Jesteś ekspertem od zamówień publicznych w Polsce. Oceń trafność każdego ogłoszenia przetargowego dla podanego profilu wyszukiwania klienta w skali 0.0-1.0. Bierz pod uwagę WYŁĄCZNIE bezpośrednią zgodność branżową, rodzaj zamówienia i rzeczywisty zakres prac. Jeśli kandydat pasuje tylko przez bardzo ogólne słowa (np. usługa, szkolenie, obsługa, pracownicy, grupowy), ale nie dotyczy rdzenia branży klienta, nadaj score 0-0.15. Odpowiedz WYŁĄCZNIE jako obiekt JSON: {"ranked":[{"id":"...","score":0.0-1.0,"reason":"krótki powód po polsku (max 70 znaków)"}]}`,
+          `Jesteś ekspertem od zamówień publicznych w Polsce. Oceniasz trafność ogłoszeń dla profilu klienta na podstawie pełnego profilu tematu, a nie tylko ogólnego podobieństwa semantycznego.
+
+Zasady oceny:
+- "mustHave" to wymagania kluczowe. Jeśli ogłoszenie nie spełnia rdzenia "mustHave", score powinien być niski, nawet jeśli jest semantycznie podobne.
+- "niceToHave" podbija score, ale nie może zastąpić "mustHave".
+- "exclude" działa jak sygnał negatywny. Jeśli ogłoszenie wpada w wykluczenia lub typowe błędne skojarzenia, score powinien być bardzo niski.
+- "expectedKinds" określa preferowany typ zamówienia. Gdy typ nie pasuje, obniż score, chyba że treść ogłoszenia bardzo wyraźnie pasuje do profilu.
+- Oceniaj rzeczywisty zakres prac, branżę, kontekst i intencję zamówienia.
+- Bardzo ważne: oceń też, jak centralny jest temat w CAŁYM zamówieniu, a nie tylko czy występuje w treści.
+- Jeśli temat jest głównym i dominującym przedmiotem zamówienia, score powinien być wyższy.
+- Jeśli temat jest tylko jednym z kilku elementów szerszego zakresu, score powinien być umiarkowany.
+- Jeśli temat jest pobocznym lub incydentalnym fragmentem większego, mieszanego zamówienia (np. obok dostaw sprzętu, infrastruktury, wdrożeń wielu systemów, szkoleń, utrzymania), score powinien być wyraźnie niższy.
+- Karać ogłoszenia bundled / mixed scope, w których temat pasuje, ale nie stanowi głównej osi zamówienia.
+- Rozróżniaj centralność tematu:
+  - PRIMARY: temat jest głównym przedmiotem zamówienia
+  - SIGNIFICANT: temat jest istotny, ale nie jedyny
+  - SECONDARY: temat jest jedną z części większego scope'u
+  - INCIDENTAL: temat pojawia się marginalnie lub pomocniczo
+- Rozróżniaj typ scope'u:
+  - FOCUSED: zamówienie skupione głównie na tym temacie
+  - MIXED: zamówienie ma kilka istotnych części
+  - BUNDLED: temat jest częścią dużego pakietu z innymi dominującymi elementami
+- Jeśli kandydat pasuje tylko przez ogólne słowa (np. usługa, obsługa, szkolenie, pracownicy, grupowy), ale nie pasuje do właściwego zakresu, nadaj score 0-0.15.
+- Semantic similarity i keyword match traktuj tylko jako sygnały pomocnicze, nie jako źródło prawdy.
+
+Odpowiedz WYŁĄCZNIE jako JSON:
+{"ranked":[{"id":"...","score":0.0-1.0,"reason":"krótki powód po polsku (max 70 znaków)","mustHaveSatisfied":true,"excludeTriggered":false,"kindFit":true,"topicCentrality":"PRIMARY|SIGNIFICANT|SECONDARY|INCIDENTAL","scopeType":"FOCUSED|MIXED|BUNDLED"}]}`,
         ],
         [
           "human",
-          `Profil klienta:\nTemat: ${profile.title}\nKluczowe terminy branżowe: ${profile.keywordQuery}\nMust have: ${profile.mustHave.join(", ") || "brak"}\nNice to have: ${profile.niceToHave.join(", ") || "brak"}\nWyklucz: ${profile.exclude.join(", ") || "brak"}\nOpis: ${profile.summary.slice(0, 320)}\n\nOgłoszenia do oceny:\n${JSON.stringify(compact)}`,
+          `Profil klienta:
+Temat: ${profile.title}
+Opis / summary: ${profile.summary.slice(0, 1200)}
+Frazy obowiązkowe (mustHave): ${profile.mustHave.join(", ") || "brak"}
+Frazy mile widziane (niceToHave): ${profile.niceToHave.join(", ") || "brak"}
+Frazy wykluczające (exclude): ${profile.exclude.join(", ") || "brak"}
+Preferowane typy zamówień (expectedKinds): ${profile.expectedKinds.join(", ") || "brak"}
+Kontekst tytułu (titleContext): ${profile.titleContext.join(", ") || "brak"}
+Wymagane anchory: ${profile.requiredAnchors.join(", ") || "brak"}
+Query keywordowe: ${profile.keywordQuery || "brak"}
+
+Ogłoszenia do oceny:
+${JSON.stringify(compact)}`,
         ],
       ]);
 
       const parsed = this.parseJson<{
-        ranked?: Array<{ id?: string; score?: number; reason?: string }>;
+        ranked?: Array<{
+          id?: string;
+          score?: number;
+          reason?: string;
+          mustHaveSatisfied?: boolean;
+          excludeTriggered?: boolean;
+          kindFit?: boolean;
+          topicCentrality?: "PRIMARY" | "SIGNIFICANT" | "SECONDARY" | "INCIDENTAL";
+          scopeType?: "FOCUSED" | "MIXED" | "BUNDLED";
+        }>;
       }>(this.extractJsonLikeText(result.content));
 
-      const rerankMap = new Map<string, number>();
+      const rerankMap = new Map<
+        string,
+        {
+          score: number;
+          reason: string | null;
+          mustHaveSatisfied: boolean | null;
+          excludeTriggered: boolean | null;
+          kindFit: boolean | null;
+          topicCentrality: "PRIMARY" | "SIGNIFICANT" | "SECONDARY" | "INCIDENTAL" | null;
+          scopeType: "FOCUSED" | "MIXED" | "BUNDLED" | null;
+        }
+      >();
+
       for (const row of parsed.ranked ?? []) {
-        if (row.id) rerankMap.set(row.id, clamp(Number(row.score) || 0));
+        if (!row.id) continue;
+        rerankMap.set(row.id, {
+          score: clamp(Number(row.score) || 0),
+          reason: row.reason ?? null,
+          mustHaveSatisfied: typeof row.mustHaveSatisfied === "boolean" ? row.mustHaveSatisfied : null,
+          excludeTriggered: typeof row.excludeTriggered === "boolean" ? row.excludeTriggered : null,
+          kindFit: typeof row.kindFit === "boolean" ? row.kindFit : null,
+          topicCentrality:
+            row.topicCentrality === "PRIMARY"
+            || row.topicCentrality === "SIGNIFICANT"
+            || row.topicCentrality === "SECONDARY"
+            || row.topicCentrality === "INCIDENTAL"
+              ? row.topicCentrality
+              : null,
+          scopeType:
+            row.scopeType === "FOCUSED"
+            || row.scopeType === "MIXED"
+            || row.scopeType === "BUNDLED"
+              ? row.scopeType
+              : null,
+        });
       }
 
       const rerankWindow = window.map((c) => {
-        const rerankScore = rerankMap.get(c.announcement_id) ?? null;
+        const rerankRow = rerankMap.get(c.announcement_id) ?? null;
+        const rerankScore = rerankRow?.score ?? null;
         const final =
           rerankScore != null
-            ? clamp(c.hybrid * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
-            : c.hybrid;
-        return { ...c, rerank: rerankScore, final };
+            ? clamp(c.semantic * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
+            : c.semantic;
+        return {
+          ...c,
+          rerank: rerankScore,
+          final,
+          rerankReason: rerankRow?.reason ?? null,
+          mustHaveSatisfied: rerankRow?.mustHaveSatisfied ?? null,
+          excludeTriggered: rerankRow?.excludeTriggered ?? null,
+          kindFit: rerankRow?.kindFit ?? null,
+          topicCentrality: rerankRow?.topicCentrality ?? null,
+          scopeType: rerankRow?.scopeType ?? null,
+        };
       });
 
-      const restScored = rest.map((c) => ({ ...c, final: c.hybrid }));
+      const restScored = rest.map((c) => ({
+        ...c,
+        final: c.semantic,
+        rerankReason: null,
+        mustHaveSatisfied: null,
+        excludeTriggered: null,
+        kindFit: null,
+        topicCentrality: null,
+        scopeType: null,
+      }));
       const all = [...rerankWindow, ...restScored].sort((a, b) => b.final - a.final);
 
       this.logger.log(
@@ -977,9 +1090,9 @@ export class ClientMatchingService {
       return all;
     } catch (err) {
       this.logger.warn(
-        `LLM re-ranking failed, falling back to hybrid score: ${(err as Error).message}`,
+        `LLM re-ranking failed, falling back to semantic score: ${(err as Error).message}`,
       );
-      return candidates.map((c) => ({ ...c, final: c.hybrid }));
+      return candidates.map((c) => ({ ...c, final: c.semantic }));
     }
   }
 
@@ -1042,8 +1155,8 @@ export class ClientMatchingService {
         const rerankScore = rerankMap.get(candidate.topic_id) ?? null;
         const final =
           rerankScore != null
-            ? clamp(candidate.hybrid * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
-            : candidate.hybrid;
+            ? clamp(candidate.semantic * RERANK_HYBRID_WEIGHT + rerankScore * RERANK_LLM_WEIGHT)
+            : candidate.semantic;
 
         return {
           ...candidate,
@@ -1220,32 +1333,19 @@ export class ClientMatchingService {
       return false;
     }
 
-    if (candidate.domain >= MIN_DOMAIN_SCORE) {
-      return true;
-    }
-
-    if (candidate.semantic >= STRONG_SEMANTIC_MATCH && candidate.domain >= SOFT_DOMAIN_SCORE) {
-      return true;
-    }
-
-    return candidate.keyword >= STRONG_KEYWORD_MATCH && candidate.domain >= SOFT_DOMAIN_SCORE;
+    return candidate.semantic >= STRONG_SEMANTIC_MATCH || candidate.keyword >= STRONG_KEYWORD_MATCH || candidate.hybrid >= MIN_FINAL_SCORE;
   }
 
   private shouldKeepFastMatch(
-    profile: ResolvedTopicProfile,
+    _profile: ResolvedTopicProfile,
     semantic: number,
-    domain: number,
     finalScore: number,
   ): boolean {
     if (finalScore < MIN_STORED_MATCH_SCORE) {
       return false;
     }
 
-    if (domain >= MIN_DOMAIN_SCORE) {
-      return true;
-    }
-
-    return semantic >= STRONG_SEMANTIC_MATCH && (domain >= SOFT_DOMAIN_SCORE || profile.mustHave.length <= 1);
+    return semantic >= ANNOUNCEMENT_MATCH_THRESHOLD || finalScore >= MIN_STORED_MATCH_SCORE;
   }
 
   private getCandidateRejectionReasons(
@@ -1266,17 +1366,7 @@ export class ClientMatchingService {
       reasons.push("hybrid-below-min-final-score");
     }
 
-    if (candidate.domain < MIN_DOMAIN_SCORE) {
-      reasons.push("domain-below-min-domain-score");
-    }
 
-    if (
-      candidate.domain < SOFT_DOMAIN_SCORE &&
-      candidate.semantic < STRONG_SEMANTIC_MATCH &&
-      candidate.keyword < STRONG_KEYWORD_MATCH
-    ) {
-      reasons.push("insufficient-domain-support");
-    }
 
     if (!flags.keptAfterFilters) {
       reasons.push("filtered-before-rerank");

@@ -46,6 +46,12 @@ const topicMatchingDebugRawVectorHitSchema = z.object({
   negativePenaltyApplied: z.boolean().optional(),
   rejectionReasons: z.array(z.string()).default([]),
   announcementVectorText: z.string().nullable().optional(),
+  rerankReason: z.string().nullable().optional(),
+  mustHaveSatisfied: z.boolean().nullable().optional(),
+  excludeTriggered: z.boolean().nullable().optional(),
+  kindFit: z.boolean().nullable().optional(),
+  topicCentrality: z.enum(["PRIMARY", "SIGNIFICANT", "SECONDARY", "INCIDENTAL"]).nullable().optional(),
+  scopeType: z.enum(["FOCUSED", "MIXED", "BUNDLED"]).nullable().optional(),
 });
 
 const topicMatchingDebugCandidateSchema = z.object({
@@ -64,6 +70,12 @@ const topicMatchingDebugCandidateSchema = z.object({
   keptAfterRerank: z.boolean().optional(),
   rejectionReasons: z.array(z.string()).default([]),
   announcementVectorText: z.string().nullable().optional(),
+  rerankReason: z.string().nullable().optional(),
+  mustHaveSatisfied: z.boolean().nullable().optional(),
+  excludeTriggered: z.boolean().nullable().optional(),
+  kindFit: z.boolean().nullable().optional(),
+  topicCentrality: z.enum(["PRIMARY", "SIGNIFICANT", "SECONDARY", "INCIDENTAL"]).nullable().optional(),
+  scopeType: z.enum(["FOCUSED", "MIXED", "BUNDLED"]).nullable().optional(),
 });
 
 const topicMatchingDebugTopicSchema = z.object({

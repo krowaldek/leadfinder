@@ -987,6 +987,8 @@ function TopicRow({
                             <th className="px-3 py-2">Hybrid</th>
                             <th className="px-3 py-2">Rerank</th>
                             <th className="px-3 py-2">Final</th>
+                            <th className="px-3 py-2">Topic focus</th>
+                            <th className="px-3 py-2">Scope fit</th>
                             <th className="px-3 py-2">Filtry</th>
                             <th className="px-3 py-2">Rerank flow</th>
                             <th className="px-3 py-2">Powody odrzucenia</th>
@@ -1020,6 +1022,12 @@ function TopicRow({
                               <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.hybrid)}</td>
                               <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.rerank)}</td>
                               <td className="px-3 py-3 font-mono text-xs">{formatScore(candidate.final)}</td>
+                              <td className="px-3 py-3">
+                                <span className="text-xs text-muted-foreground">—</span>
+                              </td>
+                              <td className="px-3 py-3">
+                                <span className="text-xs text-muted-foreground">—</span>
+                              </td>
                               <td className="px-3 py-3">
                                 <div className="flex flex-wrap gap-1.5">
                                   <Badge variant={candidate.keptAfterFilters ? "secondary" : "outline"} className="text-[10px]">
