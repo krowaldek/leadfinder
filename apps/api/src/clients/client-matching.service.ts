@@ -938,7 +938,7 @@ export class ClientMatchingService {
     const rest = candidates.slice(RERANK_WINDOW);
 
     try {
-      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
       const llm = new ChatOpenAI({
         apiKey,
         model,
@@ -1115,7 +1115,7 @@ ${JSON.stringify(compact)}`,
     const rest = candidates.slice(RERANK_WINDOW);
 
     try {
-      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
       const llm = new ChatOpenAI({
         apiKey,
         model,

@@ -279,7 +279,7 @@ export class EmbeddingService {
     }
 
     const chatModel =
-      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
     const analysis = await this.analyseAnnouncement(
       announcement,
       attachmentTexts,

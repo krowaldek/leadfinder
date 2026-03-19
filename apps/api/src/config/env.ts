@@ -19,7 +19,7 @@ const envSchema = z.object({
   EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(1536),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
-  OPENAI_CHAT_MODEL: z.string().default("gpt-5-mini"),
+  OPENAI_CHAT_MODEL: z.string().default("gpt-5.4-nano"),
   GOOGLE_API_KEY: z.string().optional(),
   GOOGLE_EMBEDDING_MODEL: z.string().default("gemini-embedding-2-preview"),
 });

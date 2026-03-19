@@ -78,7 +78,7 @@ export class EmbeddingProcessor extends WorkerHost {
         const embeddingProvider = getEmbeddingProvider(this.config);
         const embeddingModel = getEmbeddingModel(this.config);
         const analysisModel =
-          this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+          this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
         const aiOperations = [
           buildAiOperationLog({
             name: "announcement-embedding",

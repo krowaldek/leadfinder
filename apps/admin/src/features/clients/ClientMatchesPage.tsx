@@ -21,6 +21,7 @@ import {
   rematchClient,
   updateMatchStatus,
 } from "./clients-api";
+import { generateAnnouncementReport } from "@/features/announcements/announcements-api";
 
 type SortOption = "deadlineAt:asc" | "similarity:desc" | "publishedAt:desc" | "title:asc";
 
@@ -143,6 +144,33 @@ export function ClientMatchesPage() {
     onError: () => toast.error("Nie udało się zakolejkować przeliczenia dopasowań"),
   });
 
+  const generateReportsMutation = useMutation({
+    mutationFn: async (announcementIds: string[]) => {
+      let successCount = 0;
+      let errorCount = 0;
+      for (const id of announcementIds) {
+        try {
+          await generateAnnouncementReport(id);
+          successCount++;
+        } catch {
+          errorCount++;
+        }
+      }
+      return { successCount, errorCount, total: announcementIds.length };
+    },
+    onSuccess: (result) => {
+      if (result.errorCount === 0) {
+        toast.success(`Wygenerowano pomyślnie ${result.successCount} raportów`);
+      } else {
+        toast.warning(
+          `Wygenerowano ${result.successCount} raportów, ale ${result.errorCount} zakończyło się błędem`,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ["client-matches", selectedClientId] });
+    },
+    onError: () => toast.error("Błąd podczas generowania raportów"),
+  });
+
   const clients = clientsQuery.data?.data ?? [];
   const projects = projectsQuery.data?.data ?? [];
   const topics = topicsQuery.data?.data ?? [];
@@ -253,6 +281,19 @@ export function ClientMatchesPage() {
         onHideDismissedChange={setHideDismissed}
         onHideExpiredChange={setHideExpired}
         onRematch={() => rematchMutation.mutate(selectedClientId)}
+        generateReportsPending={generateReportsMutation.isPending}
+        onGenerateReports={() => {
+          if (!selectedTopicId) return;
+          const ids = displayedMatches.map((m) => m.announcementId);
+          const idsWithoutReport = displayedMatches.filter((m) => !m.announcement.detailedReport).map((m) => m.announcementId);
+          
+          if (idsWithoutReport.length === 0) {
+            toast.info("Wszystkie widoczne ogłoszenia mają już wygenerowany raport.");
+            return;
+          }
+          toast.info(`Generowanie raportów dla ${idsWithoutReport.length} ogłoszeń. Może to chwilę potrwać...`);
+          generateReportsMutation.mutate(idsWithoutReport);
+        }}
       />
 
       {selectedClientId ? (

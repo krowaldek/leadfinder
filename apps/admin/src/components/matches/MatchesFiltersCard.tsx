@@ -31,6 +31,7 @@ interface MatchesFiltersCardProps {
   hideDismissed: boolean;
   hideExpired: boolean;
   rematchPending: boolean;
+  generateReportsPending?: boolean;
   onClientChange: (value: string) => void;
   onProjectChange: (value: string) => void;
   onTopicChange: (value: string) => void;
@@ -39,6 +40,7 @@ interface MatchesFiltersCardProps {
   onHideDismissedChange: (value: boolean) => void;
   onHideExpiredChange: (value: boolean) => void;
   onRematch: () => void;
+  onGenerateReports?: () => void;
 }
 
 const SORT_OPTIONS = [
@@ -85,6 +87,7 @@ export function MatchesFiltersCard({
   hideDismissed,
   hideExpired,
   rematchPending,
+  generateReportsPending,
   onClientChange,
   onProjectChange,
   onTopicChange,
@@ -93,6 +96,7 @@ export function MatchesFiltersCard({
   onHideDismissedChange,
   onHideExpiredChange,
   onRematch,
+  onGenerateReports,
 }: MatchesFiltersCardProps) {
   return (
     <Card className="overflow-visible border border-primary/10 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.16),transparent_38%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.98))] shadow-[0_30px_80px_-48px_rgba(37,99,235,0.55)] dark:bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.2),transparent_34%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(15,23,42,0.9))]">
@@ -113,10 +117,25 @@ export function MatchesFiltersCard({
               Wybierz klienta i pracuj na jednym, czytelnym widoku dopasowania zamiast tabeli technicznej.
             </CardDescription>
           </div>
-          <Button type="button" size="sm" onClick={onRematch} disabled={!selectedClientId || rematchPending}>
-            <RefreshCw className={cn("size-3.5", rematchPending && "animate-spin")} />
-            {rematchPending ? "Przeliczam…" : "Przelicz dopasowania"}
-          </Button>
+          <div className="flex gap-2">
+            {onGenerateReports && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={onGenerateReports}
+                disabled={!selectedTopicId || generateReportsPending}
+                title="Generuj uszczegółowione analizy dla ogłoszeń wybranego tematu"
+              >
+                <Sparkles className={cn("size-3.5", generateReportsPending && "animate-pulse")} />
+                {generateReportsPending ? "Generowanie..." : "Generuj raporty"}
+              </Button>
+            )}
+            <Button type="button" size="sm" onClick={onRematch} disabled={!selectedClientId || rematchPending}>
+              <RefreshCw className={cn("size-3.5", rematchPending && "animate-spin")} />
+              {rematchPending ? "Przeliczam…" : "Przelicz dopasowania"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-5 pt-5">

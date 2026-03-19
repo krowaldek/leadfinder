@@ -941,7 +941,7 @@ export class SearchService {
       throw new Error("OPENAI_API_KEY is not set — cannot perform AI search");
     }
 
-    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
     return new ChatOpenAI({
       apiKey,
       model,

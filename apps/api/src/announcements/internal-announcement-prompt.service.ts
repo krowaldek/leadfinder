@@ -195,7 +195,7 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
-    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+    const chatModel = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
     const missingFields = this.getMissingFields(session.collected);
 
     const messages = [

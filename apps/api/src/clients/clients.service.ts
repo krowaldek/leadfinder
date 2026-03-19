@@ -726,7 +726,7 @@ export class ClientsService {
 
   async onboard(activity: string, email: string) {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
-    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
 
     // Derive sensible defaults from email
     const [localPart, domain] = email.split("@");
@@ -883,7 +883,7 @@ Zasady:
       };
     }
 
-    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
     const llm = new ChatOpenAI({
       apiKey,
       model,

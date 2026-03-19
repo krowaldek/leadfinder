@@ -62,7 +62,7 @@ export class AttachmentEnrichmentService {
   *  1. Pobierz Announcement.rawData
    *  2. Wybierz najistotniejsze załączniki tekstowe (PDF/DOCX/TXT/HTML/...)
    *  3. Pobierz każdy plik, wyciągnij tekst, skróć do budżetu znaków
-   *  4. Przekaż zebrany tekst do GPT-5 mini → krótkie podsumowanie
+  *  4. Przekaż zebrany tekst do GPT-5.4 nano → krótkie podsumowanie
    *  5. Dopisz "| ZAŁĄCZNIKI: {summary}" do searchContext
    *  6. Wrzuć announcement ponownie do kolejki EMBED_ANNOUNCEMENT
    */
@@ -187,7 +187,7 @@ export class AttachmentEnrichmentService {
     apiKey: string,
   ): Promise<string | null> {
     const chatModel =
-      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5-mini";
+      this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
 
     try {
       const chat = new ChatOpenAI({

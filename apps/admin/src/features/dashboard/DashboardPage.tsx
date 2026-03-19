@@ -226,7 +226,7 @@ function JobTypeRow({
 // ── Model config card ─────────────────────────────────────────────────────────
 
 const EMBEDDING_MODEL = "text-embedding-3-small";
-const ANALYSIS_MODEL = "gpt-5-mini";
+const ANALYSIS_MODEL = "gpt-5.4-nano";
 const EMBEDDING_DIM = 1536;
 const EMBEDDING_COST_PER_1M = 0.02; // USD
 const ANALYSIS_COST_PER_1M_IN = 0.15;

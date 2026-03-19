@@ -19,6 +19,7 @@ const OPENAI_MODEL_PRICING_USD_PER_1M: Record<
   string,
   { input: number; output: number }
 > = {
+  "gpt-5.4-nano": { input: 0.15, output: 0.6 },
   "gpt-5-mini": { input: 0.15, output: 0.6 },
   "text-embedding-3-small": { input: 0.02, output: 0 },
 };
