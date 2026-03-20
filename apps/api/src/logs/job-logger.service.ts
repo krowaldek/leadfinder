@@ -1,6 +1,10 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import type { JobLogType } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.js";
+import {
+  buildAiOperationLog,
+  extractTokenUsageFromMetadata,
+} from "../common/ai-usage.js";
 
 export interface StartLogOptions {
   type: JobLogType;
@@ -16,6 +20,17 @@ export interface FinishLogOptions {
   status: "COMPLETED" | "FAILED";
   result?: Record<string, unknown>;
   error?: string;
+}
+
+export interface FinishAiPromptLogOptions {
+  logId: string;
+  name: string;
+  provider: "OPENAI" | "GOOGLE";
+  model: string;
+  responseMetadata?: unknown;
+  result?: Record<string, unknown>;
+  error?: string;
+  status?: "COMPLETED" | "FAILED";
 }
 
 /**
@@ -53,6 +68,15 @@ export class JobLoggerService {
     }
   }
 
+  async startAiPrompt(
+    options: Omit<StartLogOptions, "type">,
+  ): Promise<string> {
+    return this.start({
+      ...options,
+      type: "AI_PROMPT",
+    });
+  }
+
   async finish(options: FinishLogOptions): Promise<void> {
     if (options.logId === "noop") return;
 
@@ -79,5 +103,37 @@ export class JobLoggerService {
     } catch (err) {
       this.logger.error(`Failed to update job log ${options.logId}: ${err}`);
     }
+  }
+
+  async finishAiPrompt(options: FinishAiPromptLogOptions): Promise<void> {
+    const tokenUsage = extractTokenUsageFromMetadata(options.responseMetadata);
+    const aiOperation = buildAiOperationLog({
+      name: options.name,
+      provider: options.provider,
+      model: options.model,
+      ...(tokenUsage ?? {}),
+    });
+
+    const existingAiOperations = Array.isArray(options.result?.aiOperations)
+      ? options.result.aiOperations
+      : [];
+
+    await this.finish({
+      logId: options.logId,
+      status: options.status ?? (options.error ? "FAILED" : "COMPLETED"),
+      error: options.error,
+      result: {
+        ...(options.result ?? {}),
+        aiOperations: [...existingAiOperations, aiOperation],
+        ...(tokenUsage
+          ? {
+              promptTokens: tokenUsage.promptTokens,
+              completionTokens: tokenUsage.completionTokens,
+              totalTokens: tokenUsage.totalTokens,
+              estimatedCostUsd: aiOperation.estimatedCostUsd ?? null,
+            }
+          : {}),
+      },
+    });
   }
 }

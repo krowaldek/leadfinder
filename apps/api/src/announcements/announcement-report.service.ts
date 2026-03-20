@@ -385,6 +385,7 @@ export class AnnouncementReportService {
 
     // ── 4. Zapisz wynik ──────────────────────────────────────────────────────
     const metadata = await this.resolveAnnouncementMetadata(
+      announcementId,
       {
         title: announcement.title,
         description: announcement.description,
@@ -617,6 +618,7 @@ export class AnnouncementReportService {
   }
 
   private async resolveAnnouncementMetadata(
+    announcementId: string,
     announcement: {
       title: string;
       description: string | null;
@@ -642,8 +644,18 @@ export class AnnouncementReportService {
       return fallback;
     }
 
+    const model = this.config.get("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "ANNOUNCEMENT_REPORT_METADATA",
+      entityId: announcementId,
+      entityTitle: announcement.title,
+      payload: {
+        announcementId,
+        reportLength: announcement.detailedReport.length,
+      },
+    });
+
     try {
-      const model = this.config.get("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
       const llm = new ChatOpenAI({
         apiKey,
         model,
@@ -676,13 +688,35 @@ Zasady:
 
       const parsed = REPORT_METADATA_SCHEMA.parse(JSON.parse(extractMessageText(response.content) || String(response.content)));
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "announcement-report-metadata",
+        provider: "OPENAI",
+        model,
+        responseMetadata: response.response_metadata,
+        result: {
+          announcementId,
+          hasSuggestedTitle: parsed.suggestedTitle != null,
+          hasLocation: parsed.location != null,
+          hasContractingAuthority: parsed.contractingAuthority != null,
+        },
+      });
+
       return {
         suggestedTitle: normalizeOptionalText(parsed.suggestedTitle) ?? fallback.suggestedTitle,
         location: normalizeOptionalText(parsed.location) ?? fallback.location,
         contractingAuthority: normalizeOptionalText(parsed.contractingAuthority) ?? fallback.contractingAuthority,
       };
     } catch (error) {
-      this.logger.warn(`Report metadata extraction failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "announcement-report-metadata",
+        provider: "OPENAI",
+        model,
+        error: message,
+      });
+      this.logger.warn(`Report metadata extraction failed: ${message}`);
       return fallback;
     }
   }

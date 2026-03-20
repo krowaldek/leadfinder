@@ -17,6 +17,8 @@ import { Redis } from "ioredis";
 import type { AppEnv } from "../config/env.js";
 import type { ClientProfileFields } from "@leadfinder/contracts";
 import { ClientsService } from "./clients.service.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
+import { buildAiOperationLog, extractTokenUsageFromMetadata } from "../common/ai-usage.js";
 
 const SESSION_PREFIX = "client-prompt:";
 const SESSION_TTL_SEC = 1800; // 30 min
@@ -64,6 +66,7 @@ export class ClientPromptService implements OnModuleDestroy {
   constructor(
     @Inject(ConfigService) private readonly config: ConfigService<AppEnv>,
     @Inject(ClientsService) private readonly clientsService: ClientsService,
+    @Inject(JobLoggerService) private readonly jobLogger: JobLoggerService,
   ) {
     const redisUrl =
       config.get<string>("REDIS_URL") ?? "redis://127.0.0.1:6380";
@@ -163,72 +166,130 @@ export class ClientPromptService implements OnModuleDestroy {
       modelKwargs: { response_format: { type: "json_object" } },
     });
 
-    const aiResponse = await llm.invoke(messages);
-    const raw = aiResponse.content as string;
-
-    let extraction: AIExtraction;
-    try {
-      extraction = JSON.parse(raw) as AIExtraction;
-    } catch {
-      this.logger.error("Failed to parse AI response", raw);
-      throw new Error("AI response parsing failed");
-    }
-
-    // Merge non-null extracted fields into session
-    const updated: CollectedFields = { ...session.collected };
-    const f = extraction.fields ?? {};
-    if (f.companyName) updated.companyName = f.companyName;
-    if (f.industry) updated.industry = f.industry;
-    if (f.geographicScope) updated.geographicScope = f.geographicScope;
-    if (f.geographicDetails) updated.geographicDetails = f.geographicDetails;
-    if (f.budgetDescription) updated.budgetDescription = f.budgetDescription;
-    if (f.contactPersonName) updated.contactPersonName = f.contactPersonName;
-    if (f.contactPersonRole) updated.contactPersonRole = f.contactPersonRole;
-
-    // Update history
-    session.history.push({ role: "user", content: userMessage });
-    session.history.push({ role: "assistant", content: extraction.response });
-
-    // Re-check completeness with updated fields
-    const stillMissing = this.getMissingFields(updated);
-    const isActuallyComplete = stillMissing.length === 0;
-
-    // Save session
-    await this.saveSession(sid, {
-      collected: updated,
-      history: session.history,
+    const logId = await this.jobLogger.start({
+      type: "AI_PROMPT",
+      jobName: "CLIENT_PROMPT",
+      entityId: sid,
+      payload: {
+        sessionId: sid,
+        messageLength: userMessage.length,
+      },
     });
 
-    if (isActuallyComplete) {
-      // Validate that geographicDetails is present if needed
-      const profile = updated as ClientProfileFields;
-      if (
-        (profile.geographicScope === "REGIONAL" ||
-          profile.geographicScope === "LOCAL") &&
-        !profile.geographicDetails
-      ) {
-        const question =
-          "Podaj proszę szczegóły zasięgu geograficznego (np. 'województwo mazowieckie' lub 'Kraków + promień 50 km').";
-        return {
+    try {
+      const aiResponse = await llm.invoke(messages);
+      const raw = aiResponse.content as string;
+      const tokenUsage = extractTokenUsageFromMetadata(aiResponse.response_metadata);
+      const aiOperation = tokenUsage
+        ? buildAiOperationLog({
+            name: "client-prompt",
+            provider: "OPENAI",
+            model: chatModel,
+            ...tokenUsage,
+          })
+        : null;
+
+      let extraction: AIExtraction;
+      try {
+        extraction = JSON.parse(raw) as AIExtraction;
+      } catch {
+        this.logger.error("Failed to parse AI response", raw);
+        throw new Error("AI response parsing failed");
+      }
+
+      // Merge non-null extracted fields into session
+      const updated: CollectedFields = { ...session.collected };
+      const f = extraction.fields ?? {};
+      if (f.companyName) updated.companyName = f.companyName;
+      if (f.industry) updated.industry = f.industry;
+      if (f.geographicScope) updated.geographicScope = f.geographicScope;
+      if (f.geographicDetails) updated.geographicDetails = f.geographicDetails;
+      if (f.budgetDescription) updated.budgetDescription = f.budgetDescription;
+      if (f.contactPersonName) updated.contactPersonName = f.contactPersonName;
+      if (f.contactPersonRole) updated.contactPersonRole = f.contactPersonRole;
+
+      // Update history
+      session.history.push({ role: "user", content: userMessage });
+      session.history.push({ role: "assistant", content: extraction.response });
+
+      // Re-check completeness with updated fields
+      const stillMissing = this.getMissingFields(updated);
+      const isActuallyComplete = stillMissing.length === 0;
+
+      // Save session
+      await this.saveSession(sid, {
+        collected: updated,
+        history: session.history,
+      });
+
+      let response:
+        | {
+            status: "question";
+            sessionId: string;
+            question: string;
+            collectedData: CollectedFields;
+          }
+        | {
+            status: "created";
+            client: ReturnType<ClientsService["serializeClient"]>;
+            matchCount: number;
+          };
+
+      if (isActuallyComplete) {
+        // Validate that geographicDetails is present if needed
+        const profile = updated as ClientProfileFields;
+        if (
+          (profile.geographicScope === "REGIONAL" ||
+            profile.geographicScope === "LOCAL") &&
+          !profile.geographicDetails
+        ) {
+          const question =
+            "Podaj proszę szczegóły zasięgu geograficznego (np. 'województwo mazowieckie' lub 'Kraków + promień 50 km').";
+          response = {
+            status: "question",
+            sessionId: sid,
+            question,
+            collectedData: updated,
+          };
+        } else {
+          // Delete session and create client
+          await this.redis.del(`${SESSION_PREFIX}${sid}`);
+          const client = await this.clientsService.createClient(profile);
+          response = { status: "created", client, matchCount: 0 };
+        }
+      } else {
+        response = {
           status: "question",
           sessionId: sid,
-          question,
+          question: extraction.response,
           collectedData: updated,
         };
       }
 
-      // Delete session and create client
-      await this.redis.del(`${SESSION_PREFIX}${sid}`);
-      const client = await this.clientsService.createClient(profile);
-      return { status: "created", client, matchCount: 0 };
-    }
+      await this.jobLogger.finish({
+        logId,
+        status: "COMPLETED",
+        result: {
+          sessionId: sid,
+          status: response.status,
+          aiOperations: aiOperation ? [aiOperation] : [],
+          ...(aiOperation
+            ? {
+                promptTokens: aiOperation.promptTokens,
+                completionTokens: aiOperation.completionTokens,
+                totalTokens: aiOperation.totalTokens,
+                estimatedCostUsd: aiOperation.estimatedCostUsd,
+              }
+            : {}),
+        },
+      });
 
-    return {
-      status: "question",
-      sessionId: sid,
-      question: extraction.response,
-      collectedData: updated,
-    };
+      return response;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+      throw err;
+    }
   }
 
   private getMissingFields(collected: CollectedFields): string[] {

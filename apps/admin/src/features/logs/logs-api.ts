@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type JobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT";
+export type JobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT" | "AI_PROMPT";
 export type JobLogStatus = "STARTED" | "COMPLETED" | "FAILED";
 
 export interface JobLog {
@@ -49,6 +49,7 @@ export interface LogsStats {
   embedding: TypeStats;
   matching: TypeStats;
   report: TypeStats;
+  aiPrompt: TypeStats;
 }
 
 export interface ReembedSourceProgress {
@@ -107,7 +108,7 @@ export interface QueuesOverview {
 // ── API calls ──────────────────────────────────────────────────────────────────
 
 async function fetchLogs(
-  type: "scraper" | "embedding" | "matching" | "reports",
+  type: "scraper" | "embedding" | "matching" | "reports" | "ai-prompts",
   params: { page?: number; limit?: number; status?: JobLogStatus; jobName?: string },
 ): Promise<LogsResponse> {
   const query = new URLSearchParams();
@@ -167,6 +168,15 @@ export function useReportLogs(opts: UseLogsOptions = {}) {
   return useQuery<LogsResponse>({
     queryKey: ["logs", "reports", { page, limit, status }],
     queryFn: () => fetchLogs("reports", { page, limit, status }),
+    refetchInterval,
+  });
+}
+
+export function useAiPromptLogs(opts: UseLogsOptions = {}) {
+  const { page = 1, limit = 50, status, refetchInterval = 10_000 } = opts;
+  return useQuery<LogsResponse>({
+    queryKey: ["logs", "ai-prompts", { page, limit, status }],
+    queryFn: () => fetchLogs("ai-prompts", { page, limit, status }),
     refetchInterval,
   });
 }

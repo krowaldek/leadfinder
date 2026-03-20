@@ -4,6 +4,42 @@ export interface TokenUsageLike {
   totalTokens: number;
 }
 
+export function extractTokenUsageFromMetadata(
+  meta: unknown,
+): TokenUsageLike | null {
+  const usage = (meta as Record<string, unknown> | undefined)?.tokenUsage as
+    | {
+        promptTokens?: unknown;
+        completionTokens?: unknown;
+        totalTokens?: unknown;
+      }
+    | undefined;
+
+  if (!usage) {
+    return null;
+  }
+
+  const promptTokens = Number(usage.promptTokens ?? 0);
+  const completionTokens = Number(usage.completionTokens ?? 0);
+  const totalTokens = Number(
+    usage.totalTokens ?? promptTokens + completionTokens,
+  );
+
+  if (
+    !Number.isFinite(promptTokens) &&
+    !Number.isFinite(completionTokens) &&
+    !Number.isFinite(totalTokens)
+  ) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
 export interface AiOperationLog {
   name: string;
   provider: "OPENAI" | "GOOGLE";

@@ -28,6 +28,7 @@ import {
   EMBEDDING_QUEUE,
   EmbeddingJob,
 } from "../embedding/embedding-queue.constants.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 
 @Injectable()
 export class ClientsService {
@@ -42,6 +43,8 @@ export class ClientsService {
     private readonly matchingQueue: Queue,
     @InjectQueue(EMBEDDING_QUEUE)
     private readonly embeddingQueue: Queue,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {}
 
   async createClient(data: {
@@ -754,6 +757,14 @@ export class ClientsService {
 
     // Try LLM extraction (graceful degradation if no key)
     if (apiKey) {
+      const logId = await this.jobLogger.startAiPrompt({
+        jobName: "CLIENT_ONBOARD_PROFILE",
+        payload: {
+          activityLength: activity.length,
+          emailDomain: domain ?? null,
+        },
+      });
+
       try {
         const llm = new ChatOpenAI({
           apiKey,
@@ -802,7 +813,28 @@ Zasady:
         if (parsed.topicProfile) {
           topicProfile = topicMatchingProfileSchema.parse(parsed.topicProfile);
         }
+
+        await this.jobLogger.finishAiPrompt({
+          logId,
+          name: "client-onboard-profile",
+          provider: "OPENAI",
+          model,
+          responseMetadata: result.response_metadata,
+          result: {
+            companyName,
+            industry,
+            topicTitle,
+            hasTopicProfile: !!parsed.topicProfile,
+          },
+        });
       } catch (err) {
+        await this.jobLogger.finishAiPrompt({
+          logId,
+          name: "client-onboard-profile",
+          provider: "OPENAI",
+          model,
+          error: err instanceof Error ? err.message : String(err),
+        });
         this.logger.warn(
           "Onboard LLM extraction failed, using defaults",
           (err as Error).message,
@@ -891,8 +923,19 @@ Zasady:
       modelKwargs: { response_format: { type: "json_object" } },
     });
 
-    const result = await llm.invoke([
-      new SystemMessage(`Jesteś ekspertem od zamówień publicznych w Polsce. Generujesz STRUKTURALNY profil tematu wyszukiwania ogłoszeń przetargowych.
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "GENERATE_TOPIC_PROMPT",
+      entityId: clientId,
+      entityTitle: title,
+      payload: {
+        clientId,
+        titleLength: title.length,
+      },
+    });
+
+    try {
+      const result = await llm.invoke([
+        new SystemMessage(`Jesteś ekspertem od zamówień publicznych w Polsce. Generujesz STRUKTURALNY profil tematu wyszukiwania ogłoszeń przetargowych.
 
 Odpowiedz WYŁĄCZNIE jako obiekt JSON (bez markdown):
 {
@@ -911,24 +954,51 @@ Zasady:
 - exclude: typowe błędne sąsiednie branże lub fałszywe skojarzenia, 0-8 pozycji
 - expectedKinds: tylko realne typy zamówień
 - unikaj ogólników typu "obsługa", "usługa", "pracownicy", jeśli nie są istotą tematu`),
-      new HumanMessage(
-        `${context ? context + "\n" : ""}Temat wyszukiwania: ${title}`,
-      ),
-    ]);
+        new HumanMessage(
+          `${context ? context + "\n" : ""}Temat wyszukiwania: ${title}`,
+        ),
+      ]);
 
-    const parsed = JSON.parse(result.content as string) as {
-      matchingProfile?: TopicMatchingProfile;
-    };
-    const matchingProfile = topicMatchingProfileSchema.parse(
-      parsed.matchingProfile ?? {
-        summary: `Zamówienia związane z: ${title}`,
-        mustHave: [title],
-        niceToHave: [],
-        exclude: [],
-        expectedKinds: [],
-      },
-    );
-    return { prompt: matchingProfile.summary, matchingProfile };
+      const parsed = JSON.parse(result.content as string) as {
+        matchingProfile?: TopicMatchingProfile;
+      };
+      const matchingProfile = topicMatchingProfileSchema.parse(
+        parsed.matchingProfile ?? {
+          summary: `Zamówienia związane z: ${title}`,
+          mustHave: [title],
+          niceToHave: [],
+          exclude: [],
+          expectedKinds: [],
+        },
+      );
+
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "generate-topic-prompt",
+        provider: "OPENAI",
+        model,
+        responseMetadata: result.response_metadata,
+        result: {
+          clientId,
+          title,
+          hasMatchingProfile: true,
+        },
+      });
+
+      return {
+        prompt: buildTopicPromptFromProfile(matchingProfile),
+        matchingProfile,
+      };
+    } catch (err) {
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "generate-topic-prompt",
+        provider: "OPENAI",
+        model,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   private prepareTopicPayload(

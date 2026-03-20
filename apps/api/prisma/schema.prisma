@@ -290,6 +290,7 @@ enum JobLogType {
   EMBEDDING
   MATCHING
   REPORT
+  AI_PROMPT
 }
 
 enum JobLogStatus {

@@ -14,11 +14,20 @@ describe("ClientMatchingService", () => {
     get: vi.fn(() => undefined),
   };
 
+  const jobLogger = {
+    startAiPrompt: vi.fn(async () => "log-1"),
+    finishAiPrompt: vi.fn(async () => undefined),
+  };
+
   let service: ClientMatchingService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new ClientMatchingService(prisma as never, config as never);
+    service = new ClientMatchingService(
+      prisma as never,
+      config as never,
+      jobLogger as never,
+    );
   });
 
   it("does not keep false positive match for unrelated announcement domain", async () => {

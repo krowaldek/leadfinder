@@ -4,6 +4,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
 import type { SearchMode, SearchResultItem } from "@leadfinder/contracts";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 import {
   AppEmbeddings,
   hasValidEmbeddingConfig,
@@ -65,6 +66,8 @@ export class SearchService {
     private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService<AppEnv>,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {}
 
   async semanticSearch(
@@ -630,16 +633,22 @@ export class SearchService {
     query: string,
     candidates: SearchCandidate[],
   ): Promise<Map<string, RerankResult>> {
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "SEARCH_RERANK",
+      payload: {
+        queryLength: query.length,
+        candidateCount: candidates.length,
+      },
+    });
+
     try {
       const llm = this.getChatModel();
       const compact = candidates.map((candidate) => ({
         id: candidate.row.id,
         title: candidate.row.title,
-        description: candidate.row.description,
-        announcementTitle: candidate.row.announcement_title,
+        description: (candidate.row.description ?? "").slice(0, 300),
         source: candidate.row.source,
-        similarity: candidate.semantic,
-        keyword: candidate.keyword,
       }));
 
       const response = await llm.invoke([
@@ -649,7 +658,7 @@ export class SearchService {
         ],
         [
           "human",
-          `Zapytanie: ${query}\nKandydaci:\n${JSON.stringify(compact, null, 2)}`,
+          `Zapytanie: ${query}\nKandydaci:\n${JSON.stringify(compact)}`,
         ],
       ]);
 
@@ -664,8 +673,28 @@ export class SearchService {
         map.set(row.id, { score, reason: row.reason ?? "" });
       }
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "search-rerank",
+        provider: "OPENAI",
+        model,
+        responseMetadata: response.response_metadata,
+        result: {
+          queryLength: query.length,
+          candidateCount: candidates.length,
+          returnedRows: parsed.ranked?.length ?? 0,
+        },
+      });
+
       return map;
     } catch (error) {
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "search-rerank",
+        provider: "OPENAI",
+        model,
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.logger.warn(
         `Rerank fallback: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -676,6 +705,14 @@ export class SearchService {
   private async expandQuery(
     query: string,
   ): Promise<{ effectiveQuery: string; notes: string[] }> {
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "SEARCH_QUERY_EXPANSION",
+      payload: {
+        queryLength: query.length,
+      },
+    });
+
     try {
       const llm = this.getChatModel();
       const response = await llm.invoke([
@@ -698,11 +735,31 @@ export class SearchService {
         .filter((term) => term.length > 0)
         .slice(0, 8);
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "search-query-expansion",
+        provider: "OPENAI",
+        model,
+        responseMetadata: response.response_metadata,
+        result: {
+          queryLength: query.length,
+          expandedLength: expanded.length,
+          termsCount: terms.length,
+        },
+      });
+
       return {
         effectiveQuery: expanded,
         notes: terms.length > 0 ? [`Rozszerzenia: ${terms.join(", ")}`] : [],
       };
     } catch (error) {
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "search-query-expansion",
+        provider: "OPENAI",
+        model,
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.logger.warn(
         `Query expansion fallback: ${error instanceof Error ? error.message : String(error)}`,
       );

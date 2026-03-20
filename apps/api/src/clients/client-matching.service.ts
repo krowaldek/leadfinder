@@ -4,6 +4,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { parseTopicMatchingProfile, type AnnouncementKind, type TopicMatchingProfile } from "@leadfinder/contracts";
 import { PrismaService } from "../database/prisma.service.js";
 import type { AppEnv } from "../config/env.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -59,6 +60,12 @@ interface ScoredCandidate {
   hybrid: number;
   rerank: number | null;
   final: number;
+  rerankReason?: string | null;
+  mustHaveSatisfied?: boolean | null;
+  excludeTriggered?: boolean | null;
+  kindFit?: boolean | null;
+  topicCentrality?: "PRIMARY" | "SIGNIFICANT" | "SECONDARY" | "INCIDENTAL" | null;
+  scopeType?: "FOCUSED" | "MIXED" | "BUNDLED" | null;
 }
 
 interface TopicMatchingDebugCandidate {
@@ -130,7 +137,7 @@ const KEYWORD_MATCH_LIMIT = 100;
 const FINAL_MATCH_LIMIT = 100;
 
 /** How many top candidates to send to the LLM re-ranker. */
-const RERANK_WINDOW = 50;
+const RERANK_WINDOW = 15;
 
 /** Used in the reverse direction (announcement → topics). */
 const MATCH_LIMIT_TOPICS = 100;
@@ -444,6 +451,8 @@ export class ClientMatchingService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ConfigService) private readonly config: ConfigService<AppEnv>,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {}
 
   // ── matchTopic ─────────────────────────────────────────────────────────────
@@ -571,7 +580,10 @@ export class ClientMatchingService {
       `Topic "${topicTitle}": vector=${vectorRows.length}, keyword=${keywordRows.length}, merged=${merged.length}, pre-rerank=${sorted.length}`,
     );
 
-    const reranked = await this.applyRerank(profile, sorted);
+    const reranked = await this.applyRerank(profile, sorted, {
+      topicId,
+      topicTitle,
+    });
     const rerankWindowIds = new Set(sorted.slice(0, RERANK_WINDOW).map((candidate) => candidate.announcement_id));
     const keptAfterRerankIds = new Set(
       reranked
@@ -748,6 +760,7 @@ export class ClientMatchingService {
         kind: ann.kind,
       },
       candidates.sort((left, right) => right.final - left.final),
+      { announcementId },
     )).filter((candidate) => candidate.final >= MIN_STORED_MATCH_SCORE);
 
     for (const candidate of finalCandidates) {
@@ -928,6 +941,7 @@ export class ClientMatchingService {
   private async applyRerank(
     profile: ResolvedTopicProfile,
     candidates: ScoredCandidate[],
+    context?: { topicId?: string; topicTitle?: string },
   ): Promise<ScoredCandidate[]> {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey || candidates.length === 0) {
@@ -936,9 +950,20 @@ export class ClientMatchingService {
 
     const window = candidates.slice(0, RERANK_WINDOW);
     const rest = candidates.slice(RERANK_WINDOW);
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "TOPIC_MATCH_RERANK",
+      entityId: context?.topicId,
+      entityTitle: context?.topicTitle ?? profile.title,
+      payload: {
+        topicId: context?.topicId ?? null,
+        topicTitle: context?.topicTitle ?? profile.title,
+        candidateCount: candidates.length,
+        rerankWindow: window.length,
+      },
+    });
 
     try {
-      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
       const llm = new ChatOpenAI({
         apiKey,
         model,
@@ -948,9 +973,7 @@ export class ClientMatchingService {
       const compact = window.map((c) => ({
         id: c.announcement_id,
         title: c.title,
-        context: (c.search_context || c.description || "").slice(0, 1200),
-        domain: c.domain,
-        hybrid: c.hybrid,
+        context: (c.search_context || c.description || "").slice(0, 400),
       }));
 
       const result = await llm.invoke([
@@ -988,7 +1011,7 @@ Odpowiedz WYŁĄCZNIE jako JSON:
           "human",
           `Profil klienta:
 Temat: ${profile.title}
-Opis / summary: ${profile.summary.slice(0, 1200)}
+Opis / summary: ${profile.summary.slice(0, 600)}
 Frazy obowiązkowe (mustHave): ${profile.mustHave.join(", ") || "brak"}
 Frazy mile widziane (niceToHave): ${profile.niceToHave.join(", ") || "brak"}
 Frazy wykluczające (exclude): ${profile.exclude.join(", ") || "brak"}
@@ -1084,13 +1107,36 @@ ${JSON.stringify(compact)}`,
       }));
       const all = [...rerankWindow, ...restScored].sort((a, b) => b.final - a.final);
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "topic-match-rerank",
+        provider: "OPENAI",
+        model,
+        responseMetadata: result.response_metadata,
+        result: {
+          topicId: context?.topicId ?? null,
+          topicTitle: context?.topicTitle ?? profile.title,
+          candidateCount: candidates.length,
+          rerankWindow: window.length,
+          returnedRows: parsed.ranked?.length ?? 0,
+        },
+      });
+
       this.logger.log(
         `Re-ranked top ${window.length} candidates with LLM for topic "${profile.title}"`,
       );
       return all;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "topic-match-rerank",
+        provider: "OPENAI",
+        model,
+        error: message,
+      });
       this.logger.warn(
-        `LLM re-ranking failed, falling back to semantic score: ${(err as Error).message}`,
+        `LLM re-ranking failed, falling back to semantic score: ${message}`,
       );
       return candidates.map((c) => ({ ...c, final: c.semantic }));
     }
@@ -1105,6 +1151,7 @@ ${JSON.stringify(compact)}`,
       kind: AnnouncementKind | null;
     },
     candidates: TopicCandidate[],
+    context?: { announcementId?: string },
   ): Promise<TopicCandidate[]> {
     const apiKey = this.config.get<string>("OPENAI_API_KEY");
     if (!apiKey || candidates.length === 0) {
@@ -1113,9 +1160,19 @@ ${JSON.stringify(compact)}`,
 
     const window = candidates.slice(0, RERANK_WINDOW);
     const rest = candidates.slice(RERANK_WINDOW);
+    const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "ANNOUNCEMENT_MATCH_RERANK",
+      entityId: context?.announcementId,
+      entityTitle: announcement.title,
+      payload: {
+        announcementId: context?.announcementId ?? null,
+        candidateCount: candidates.length,
+        rerankWindow: window.length,
+      },
+    });
 
     try {
-      const model = this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
       const llm = new ChatOpenAI({
         apiKey,
         model,
@@ -1125,10 +1182,7 @@ ${JSON.stringify(compact)}`,
       const compactCandidates = window.map((candidate) => ({
         id: candidate.topic_id,
         title: candidate.title,
-        profile: candidate.prompt.slice(0, 320),
-        semantic: candidate.semantic,
-        domain: candidate.domain,
-        hybrid: candidate.hybrid,
+        profile: candidate.prompt.slice(0, 200),
       }));
 
       const result = await llm.invoke([
@@ -1138,7 +1192,7 @@ ${JSON.stringify(compact)}`,
         ],
         [
           "human",
-          `Ogłoszenie do oceny:\nTytuł: ${announcement.title}\nRodzaj: ${announcement.kind ?? "INNE"}\nOpis: ${(announcement.description ?? "brak").slice(0, 500)}\nKontekst: ${announcement.searchContext.slice(0, 700)}\nRaport: ${(announcement.detailedReport ?? "brak").slice(0, 1200)}\n\nTematy klienta do oceny:\n${JSON.stringify(compactCandidates)}`,
+          `Ogłoszenie do oceny:\nTytuł: ${announcement.title}\nRodzaj: ${announcement.kind ?? "INNE"}\nOpis: ${(announcement.description ?? "brak").slice(0, 300)}\nKontekst: ${announcement.searchContext.slice(0, 400)}\nRaport: ${(announcement.detailedReport ?? "brak").slice(0, 500)}\n\nTematy klienta do oceny:\n${JSON.stringify(compactCandidates)}`,
         ],
       ]);
 
@@ -1167,14 +1221,37 @@ ${JSON.stringify(compact)}`,
 
       const all = [...rerankedWindow, ...rest].sort((left, right) => right.final - left.final);
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "announcement-match-rerank",
+        provider: "OPENAI",
+        model,
+        responseMetadata: result.response_metadata,
+        result: {
+          announcementId: context?.announcementId ?? null,
+          announcementTitle: announcement.title,
+          candidateCount: candidates.length,
+          rerankWindow: window.length,
+          returnedRows: parsed.ranked?.length ?? 0,
+        },
+      });
+
       this.logger.log(
         `Re-ranked top ${window.length} topic candidate(s) with LLM for announcement "${announcement.title}"`,
       );
 
       return all;
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "announcement-match-rerank",
+        provider: "OPENAI",
+        model,
+        error: message,
+      });
       this.logger.warn(
-        `Announcement LLM re-ranking failed, falling back to hybrid score: ${(err as Error).message}`,
+        `Announcement LLM re-ranking failed, falling back to hybrid score: ${message}`,
       );
       return candidates;
     }

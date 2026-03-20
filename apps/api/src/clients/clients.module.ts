@@ -7,12 +7,14 @@ import { ClientsService } from "./clients.service.js";
 import { ClientPromptService } from "./client-prompt.service.js";
 import { ClientsController } from "./clients.controller.js";
 import { EMBEDDING_QUEUE } from "../embedding/embedding-queue.constants.js";
+import { LogsModule } from "../logs/logs.module.js";
 
 @Module({
   imports: [
     DatabaseModule,
     ClientMatchingModule,
     ConfigModule,
+    LogsModule,
     BullModule.registerQueue({ name: EMBEDDING_QUEUE }),
   ],
   providers: [ClientsService, ClientPromptService],

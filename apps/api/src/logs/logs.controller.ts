@@ -47,6 +47,15 @@ export class LogsController {
     return this.logsService.findByType("REPORT", { page, limit, status });
   }
 
+  @Get("ai-prompts")
+  async aiPromptLogs(
+    @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query("limit", new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query("status") status?: JobLogStatus,
+  ) {
+    return this.logsService.findByType("AI_PROMPT", { page, limit, status });
+  }
+
   @Get("matching")
   async matchingLogs(
     @Query("page", new DefaultValuePipe(1), ParseIntPipe) page: number,

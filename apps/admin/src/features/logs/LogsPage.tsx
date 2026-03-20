@@ -4,6 +4,7 @@ import { pl } from "date-fns/locale";
 import {
   Activity,
   AlertCircle,
+  Bot,
   CheckCircle2,
   Clock,
   Database,
@@ -37,6 +38,7 @@ import {
 import {
   useScraperLogs,
   useEmbeddingLogs,
+  useAiPromptLogs,
   useMatchingLogs,
   useReportLogs,
   useLogsStats,
@@ -48,8 +50,6 @@ import {
   type ReembedProgress,
   type TypeStats,
 } from "./logs-api";
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -162,6 +162,117 @@ function AiUsageCell({ log }: { log: JobLog }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AiPromptLogsTable({
+  logs,
+  isLoading,
+}: {
+  logs: JobLog[];
+  isLoading: boolean;
+}) {
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[180px]">Czas startu</TableHead>
+            <TableHead className="w-[160px]">Job</TableHead>
+            <TableHead className="w-[100px]">Status</TableHead>
+            <TableHead className="w-[90px]">Czas trwania</TableHead>
+            <TableHead className="w-[220px]">Sesja / encja</TableHead>
+            <TableHead className="min-w-[280px]">AI / koszt</TableHead>
+            <TableHead>Treść</TableHead>
+            <TableHead className="max-w-[300px]">Błąd</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableRow>
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                <Loader2 className="size-4 animate-spin inline mr-2" />
+                Ładowanie…
+              </TableCell>
+            </TableRow>
+          ) : logs.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                Brak logów promptów AI
+              </TableCell>
+            </TableRow>
+          ) : (
+            logs.map((log) => {
+              const result = log.result as Record<string, unknown> | null;
+              const content =
+                typeof result?.summary === "string"
+                  ? result.summary
+                  : typeof result?.question === "string"
+                    ? result.question
+                    : typeof result?.response === "string"
+                      ? result.response
+                      : null;
+
+              return (
+                <TableRow key={log.id}>
+                  <TableCell className="font-mono text-xs whitespace-nowrap">
+                    {formatDate(log.startedAt)}
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{log.jobName}</code>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={log.status} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs tabular-nums">
+                    {formatDuration(log.durationMs)}
+                  </TableCell>
+                  <TableCell className="text-xs max-w-[220px]">
+                    {log.entityTitle ? (
+                      <div className="space-y-0.5">
+                        <p className="truncate font-medium" title={log.entityTitle}>
+                          {log.entityTitle}
+                        </p>
+                        {log.entityId && (
+                          <p className="font-mono text-[10px] text-muted-foreground truncate">
+                            {log.entityId}
+                          </p>
+                        )}
+                      </div>
+                    ) : log.entityId ? (
+                      <code className="text-[10px] text-muted-foreground">{log.entityId}</code>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="min-w-[280px] align-top">
+                    <AiUsageCell log={log} />
+                  </TableCell>
+                  <TableCell className="max-w-[360px]">
+                    {content ? (
+                      <p className="line-clamp-3 text-xs" title={content}>
+                        {content}
+                      </p>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="max-w-[300px]">
+                    {log.error ? (
+                      <span className="text-xs text-red-600 dark:text-red-400 font-mono break-all line-clamp-3" title={log.error}>
+                        {log.error}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -765,6 +876,7 @@ function ReportLogsTable({
                           </p>
                         )}
                       </div>
+
                     ) : log.entityId ? (
                       <code className="text-[10px] text-muted-foreground">{log.entityId}</code>
                     ) : (
@@ -1084,6 +1196,15 @@ export function LogsPage() {
     status: reportStatus,
   });
 
+  // AI prompt state
+  const [aiPromptPage, setAiPromptPage] = useState(1);
+  const [aiPromptStatus, setAiPromptStatus] = useState<JobLogStatus | undefined>();
+  const { data: aiPromptData, isLoading: aiPromptLoading, refetch: refetchAiPrompt } = useAiPromptLogs({
+    page: aiPromptPage,
+    limit: 50,
+    status: aiPromptStatus,
+  });
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div>
@@ -1095,7 +1216,7 @@ export function LogsPage() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatsCard
           title="Scrapowanie"
           icon={Database}
@@ -1115,6 +1236,11 @@ export function LogsPage() {
           title="Raporty"
           icon={FileText}
           stats={statsLoading ? undefined : stats?.report}
+        />
+        <StatsCard
+          title="Prompty AI"
+          icon={Bot}
+          stats={statsLoading ? undefined : stats?.aiPrompt}
         />
       </div>
 
@@ -1161,6 +1287,15 @@ export function LogsPage() {
             {stats && (
               <span className="ml-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0 text-[10px] font-bold tabular-nums">
                 {stats.report.total}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="ai-prompts" className="gap-2">
+            <Bot className="size-3.5" />
+            Prompty AI
+            {stats && (
+              <span className="ml-1 rounded-full bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400 px-1.5 py-0 text-[10px] font-bold tabular-nums">
+                {stats.aiPrompt.total}
               </span>
             )}
           </TabsTrigger>
@@ -1280,6 +1415,30 @@ export function LogsPage() {
               total={reportData?.meta.total ?? 0}
               limit={50}
               onPageChange={setReportPage}
+            />
+          </div>
+        </TabsContent>
+
+        {/* AI PROMPTS TAB */}
+        <TabsContent value="ai-prompts">
+          <div className="space-y-2">
+            <FilterBar
+              status={aiPromptStatus}
+              onStatusChange={(s) => { setAiPromptStatus(s); setAiPromptPage(1); }}
+              total={aiPromptData?.meta.total}
+              onRefresh={() => void refetchAiPrompt()}
+              isLoading={aiPromptLoading}
+            />
+            <AiPromptLogsTable
+              logs={aiPromptData?.data ?? []}
+              isLoading={aiPromptLoading}
+            />
+            <Pagination
+              page={aiPromptPage}
+              pages={aiPromptData?.meta.pages ?? 1}
+              total={aiPromptData?.meta.total ?? 0}
+              limit={50}
+              onPageChange={setAiPromptPage}
             />
           </div>
         </TabsContent>

@@ -16,6 +16,8 @@ import type { AppEnv } from "../config/env.js";
 import { PrismaService } from "../database/prisma.service.js";
 import { EmbeddingService } from "../embedding/embedding.service.js";
 import { AnnouncementsService } from "./announcements.service.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
+import { buildAiOperationLog, extractTokenUsageFromMetadata } from "../common/ai-usage.js";
 
 const SESSION_PREFIX = "internal-announcement-prompt:";
 const SESSION_TTL_SEC = 1800;
@@ -130,6 +132,7 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
     @Inject(EmbeddingService) private readonly embeddingService: EmbeddingService,
     @Inject(AnnouncementsService)
     private readonly announcementsService: AnnouncementsService,
+    @Inject(JobLoggerService) private readonly jobLogger: JobLoggerService,
   ) {
     const redisUrl = config.get<string>("REDIS_URL") ?? "redis://127.0.0.1:6380";
     this.redis = new Redis(redisUrl, { lazyConnect: false });
@@ -215,63 +218,117 @@ export class InternalAnnouncementPromptService implements OnModuleDestroy {
       modelKwargs: { response_format: { type: "json_object" } },
     });
 
-    const aiResponse = await llm.invoke(messages);
-    const raw = typeof aiResponse.content === "string"
-      ? aiResponse.content
-      : JSON.stringify(aiResponse.content);
-
-    let extraction: AIExtraction;
-    try {
-      extraction = aiExtractionSchema.parse(JSON.parse(raw));
-    } catch {
-      this.logger.error("Failed to parse internal announcement AI response", raw);
-      throw new Error("AI response parsing failed");
-    }
-
-    const updated = this.mergeCollectedFields(session.collected, extraction.fields);
-
-    session.history.push({ role: "user", content: userMessage });
-    session.history.push({ role: "assistant", content: extraction.response });
-
-    await this.saveSession(sid, {
-      collected: updated,
-      history: session.history,
-      pendingFinalAnnouncement: null,
-      pendingSummary: null,
+    const logId = await this.jobLogger.start({
+      type: "AI_PROMPT",
+      jobName: "INTERNAL_ANNOUNCEMENT_PROMPT",
+      entityId: sid,
+      payload: {
+        sessionId: sid,
+        missingFields,
+        messageLength: userMessage.length,
+      },
     });
 
-    const stillMissing = this.getMissingFields(updated);
-    const isActuallyComplete = stillMissing.length === 0;
+    try {
+      const aiResponse = await llm.invoke(messages);
+      const tokenUsage = extractTokenUsageFromMetadata(aiResponse.response_metadata);
+      const raw = typeof aiResponse.content === "string"
+        ? aiResponse.content
+        : JSON.stringify(aiResponse.content);
 
-    if (isActuallyComplete) {
-      const finalPayload = extraction.finalAnnouncement ?? this.buildFallbackAnnouncement(updated);
-      const summary = this.buildReviewSummary(updated, finalPayload);
+      let extraction: AIExtraction;
+      try {
+        extraction = aiExtractionSchema.parse(JSON.parse(raw));
+      } catch {
+        this.logger.error("Failed to parse internal announcement AI response", raw);
+        throw new Error("AI response parsing failed");
+      }
 
-      session.history.push({ role: "assistant", content: summary });
+      const updated = this.mergeCollectedFields(session.collected, extraction.fields);
+
+      session.history.push({ role: "user", content: userMessage });
+      session.history.push({ role: "assistant", content: extraction.response });
+
       await this.saveSession(sid, {
         collected: updated,
         history: session.history,
-        pendingFinalAnnouncement: finalPayload,
-        pendingSummary: summary,
+        pendingFinalAnnouncement: null,
+        pendingSummary: null,
       });
 
-      return {
-        status: "review" as const,
-        sessionId: sid,
-        summary,
-        collectedData: updated,
-      };
-    }
+      const stillMissing = this.getMissingFields(updated);
+      const isActuallyComplete = stillMissing.length === 0;
 
-    return {
-      status: "question" as const,
-      sessionId: sid,
-      question: extraction.response,
-      collectedData: updated,
-    };
+      let response:
+        | { status: "review"; sessionId: string; summary: string; collectedData: CollectedFields }
+        | { status: "question"; sessionId: string; question: string; collectedData: CollectedFields };
+
+      if (isActuallyComplete) {
+        const finalPayload = extraction.finalAnnouncement ?? this.buildFallbackAnnouncement(updated);
+        const summary = this.buildReviewSummary(updated, finalPayload);
+
+        session.history.push({ role: "assistant", content: summary });
+        await this.saveSession(sid, {
+          collected: updated,
+          history: session.history,
+          pendingFinalAnnouncement: finalPayload,
+          pendingSummary: summary,
+        });
+
+        response = {
+          status: "review",
+          sessionId: sid,
+          summary,
+          collectedData: updated,
+        };
+      } else {
+        response = {
+          status: "question",
+          sessionId: sid,
+          question: extraction.response,
+          collectedData: updated,
+        };
+      }
+
+      const aiOperation = tokenUsage
+        ? buildAiOperationLog({
+            name: "internal-announcement-prompt",
+            provider: "OPENAI",
+            model: chatModel,
+            ...tokenUsage,
+          })
+        : null;
+
+      await this.jobLogger.finish({
+        logId,
+        status: "COMPLETED",
+        result: {
+          sessionId: sid,
+          status: response.status,
+          aiOperations: aiOperation ? [aiOperation] : [],
+          ...(aiOperation
+            ? {
+                promptTokens: aiOperation.promptTokens,
+                completionTokens: aiOperation.completionTokens,
+                totalTokens: aiOperation.totalTokens,
+                estimatedCostUsd: aiOperation.estimatedCostUsd,
+              }
+            : {}),
+        },
+      });
+
+      return response;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finish({ logId, status: "FAILED", error: message });
+      throw err;
+    }
   }
 
-  private mergeCollectedFields(current: CollectedFields, incoming: AIExtraction["fields"]): CollectedFields {
+  private mergeCollectedFields(
+    current: CollectedFields,
+    incoming: AIExtraction["fields"],
+  ): CollectedFields {
     const updated: CollectedFields = { ...current };
     for (const [key, value] of Object.entries(incoming)) {
       const normalized = normalizeOptionalText(value);

@@ -13,6 +13,7 @@ import {
   type AttachmentCacheAdapter,
   type RawAttachmentLike,
 } from "../common/attachment-text.js";
+import { JobLoggerService } from "../logs/job-logger.service.js";
 
 // ---------------------------------------------------------------------------
 // Limity
@@ -53,6 +54,8 @@ export class AttachmentEnrichmentService {
     private readonly config: ConfigService<AppEnv>,
     @InjectQueue(EMBEDDING_QUEUE)
     private readonly embeddingQueue: Queue,
+    @Inject(JobLoggerService)
+    private readonly jobLogger: JobLoggerService,
   ) {}
 
   /**
@@ -145,7 +148,7 @@ export class AttachmentEnrichmentService {
 
     // ── 4. Podsumowanie przez GPT ────────────────────────────────────────────
     const combinedText = extractedTexts.join("\n\n---\n\n");
-    const summary = await this.summarizeAttachments(combinedText, apiKey);
+    const summary = await this.summarizeAttachments(combinedText, apiKey, itemId);
 
     if (!summary) {
       this.logger.warn(`Item ${itemId} — GPT summary returned empty, skipping`);
@@ -185,9 +188,18 @@ export class AttachmentEnrichmentService {
   private async summarizeAttachments(
     text: string,
     apiKey: string,
+    itemId: string,
   ): Promise<string | null> {
     const chatModel =
       this.config.get<string>("OPENAI_CHAT_MODEL") ?? "gpt-5.4-nano";
+    const logId = await this.jobLogger.startAiPrompt({
+      jobName: "ATTACHMENT_SUMMARY",
+      entityId: itemId,
+      payload: {
+        itemId,
+        inputLength: text.length,
+      },
+    });
 
     try {
       const chat = new ChatOpenAI({
@@ -205,9 +217,29 @@ export class AttachmentEnrichmentService {
       const content =
         typeof response.content === "string" ? response.content.trim() : "";
 
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "attachment-summary",
+        provider: "OPENAI",
+        model: chatModel,
+        responseMetadata: response.response_metadata,
+        result: {
+          itemId,
+          inputLength: text.length,
+          outputLength: content.length,
+        },
+      });
+
       return content || null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      await this.jobLogger.finishAiPrompt({
+        logId,
+        name: "attachment-summary",
+        provider: "OPENAI",
+        model: chatModel,
+        error: msg,
+      });
       this.logger.error(`GPT summarization failed: ${msg}`);
       return null;
     }

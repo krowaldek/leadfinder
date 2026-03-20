@@ -7,7 +7,7 @@ import { CLIENT_MATCHING_QUEUE } from "../clients/client-matching.constants.js";
 import { EMBEDDING_QUEUE } from "../embedding/embedding-queue.constants.js";
 import { SCRAPER_QUEUE } from "../scrapers/scraper-queue.constants.js";
 
-type SupportedJobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT";
+type SupportedJobLogType = "SCRAPER" | "EMBEDDING" | "MATCHING" | "REPORT" | "AI_PROMPT";
 
 export interface LogsQuery {
   page?: number;
@@ -48,6 +48,7 @@ export interface LogsStats {
   embedding: TypeStats;
   matching: TypeStats;
   report: TypeStats;
+  aiPrompt: TypeStats;
 }
 
 export interface TypeStats {
@@ -236,7 +237,7 @@ export class LogsService {
   }
 
   async getStats(): Promise<LogsStats> {
-    const types: SupportedJobLogType[] = ["SCRAPER", "EMBEDDING", "MATCHING", "REPORT"];
+    const types: SupportedJobLogType[] = ["SCRAPER", "EMBEDDING", "MATCHING", "REPORT", "AI_PROMPT"];
 
     const results = await Promise.all(
       types.map(async (type) => {
@@ -285,6 +286,7 @@ export class LogsService {
       embedding: statsMap.EMBEDDING,
       matching: statsMap.MATCHING,
       report: statsMap.REPORT,
+      aiPrompt: statsMap.AI_PROMPT,
     };
   }
 
